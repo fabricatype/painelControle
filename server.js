@@ -130,7 +130,7 @@ app.get('/debug/pedidos/:ids', async (req, res) => {
   res.json(results);
 });
 
-// Debug: busca pedido por ID para ver situação
+// Debug: retorna resposta RAW completa do pedido
 app.get('/debug/pedido/:id', async (req, res) => {
   let token;
   try { token = await ensureToken(req); }
@@ -145,19 +145,8 @@ app.get('/debug/pedido/:id', async (req, res) => {
     let data = '';
     response.on('data', c => data += c);
     response.on('end', () => {
-      try {
-        const json = JSON.parse(data);
-        // Retorna só o relevante
-        const d = json.data || json;
-        res.json({
-          id: d.id,
-          numero: d.numero,
-          data: d.data,
-          situacao: d.situacao,
-          loja: d.loja,
-          itens: (d.itens||[]).map(function(i){ return {codigo:i.codigo, descricao:i.descricao, quantidade:i.quantidade}; })
-        });
-      } catch(e) { res.json({ raw: data }); }
+      try { res.json(JSON.parse(data)); }
+      catch(e) { res.json({ raw: data }); }
     });
   });
   request.on('error', err => res.status(500).json({ error: err.message }));
