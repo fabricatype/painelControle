@@ -445,8 +445,23 @@ async function syncDados(){
       }
       log('[Pedidos] sit'+SITS[si].id+':'+listaIds.length);
     }
+    // Deduplicação: fulfillment tem prioridade (não substituir por normal)
     var seen={};
-    listaIds=listaIds.filter(function(p){if(seen[p.id])return false;seen[p.id]=true;return true;});
+    listaIds=listaIds.filter(function(p){
+      if(seen[p.id]){
+        // Se já existe como 'normal' e agora é 'fulfillment', atualiza a origem
+        var idx=listaIds.findIndex(function(x){return x.id===p.id;});
+        return false;
+      }
+      seen[p.id]=p;
+      return true;
+    });
+    // Garante que fulfillment sobrescreve normal se o mesmo pedido aparecer nos dois
+    var idMap={};
+    listaIds.forEach(function(p){
+      if(!idMap[p.id]||p.origem==='fulfillment') idMap[p.id]=p;
+    });
+    listaIds=Object.values(idMap);
     log('[Pedidos] dedup:'+listaIds.length);
  
     // Itens
@@ -463,7 +478,9 @@ async function syncDados(){
       res.forEach(function(p){if(p)pedidosBrutos.push(p);});
       tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando itens... '+Math.min(i+3,listaIds.length)+'/'+listaIds.length+'</td></tr>';
     }
-    log('[Pedidos] comItens:'+pedidosBrutos.length);
+    var nFull=pedidosBrutos.filter(function(p){return p._origem==='fulfillment';}).length;
+    var nNorm=pedidosBrutos.filter(function(p){return p._origem==='normal';}).length;
+    log('[Pedidos] comItens:'+pedidosBrutos.length+' | normal:'+nNorm+' | fulfillment:'+nFull);
  
     // dadosBase
     var categorias={};
