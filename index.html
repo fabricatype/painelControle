@@ -265,12 +265,12 @@ async function syncDados() {
       if (pagina > 30) break;
     }
 
-    // FIX 1: Filtra SKU começa com '0' E exclui kits (formato K ou tipo kit)
+    // Filtra: SKU começa com '0' E nome não contém "kit" (case-insensitive)
     produtos = produtos.filter(function(p) {
-      return p.codigo &&
-             String(p.codigo).startsWith('0') &&
-             p.formato !== 'K' &&
-             p.tipo !== 'K';
+      if (!p.codigo || !String(p.codigo).startsWith('0')) return false;
+      var nome = (p.nome || '').toLowerCase();
+      if (nome.includes('kit')) return false;
+      return true;
     });
 
     tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
@@ -336,7 +336,12 @@ async function syncDados() {
       var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(mediaDia * config.minDias);
       var diasAteMin = mediaDia > 0 ? Math.floor((estoque - estoqueMin) / mediaDia) : 999;
       var diasAteZero = mediaDia > 0 ? Math.floor(estoque / mediaDia) : 999;
-      var categoria = (p.categoria && p.categoria.descricao) ? p.categoria.descricao : 'Sem categoria';
+      var nomeLC = (p.nome || '').toLowerCase();
+      var categoria =
+        nomeLC.includes('espreguicadeira') || nomeLC.includes('espreguiçadeira') ? 'Espreguicadeira' :
+        nomeLC.includes('mesa') ? 'Mesa de Apoio' :
+        (p.categoria && p.categoria.descricao) ? p.categoria.descricao :
+        'Outros';
       categorias[categoria] = true;
       var status = calcStatus(estoque, estoqueMin, diasAteZero, mediaDia);
       return {
