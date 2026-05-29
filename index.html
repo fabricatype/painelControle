@@ -221,6 +221,34 @@ function dateToStr(d){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
+// Desmembra código de kit em itens individuais com quantidade
+// Padrão: KT{qtd}{SKU_espreguicadeira}_{SKU_mesa}
+// Ex: KT2011224_021224 => [{sku:'011224', qty:2}, {sku:'021224', qty:1}]
+function desmembrarKit(codigo, qtdPedido) {
+  if (!codigo || !String(codigo).startsWith('KT')) return null;
+  var s = String(codigo).slice(2); // remove 'KT'
+  var idx = s.indexOf('_');
+  if (idx < 0) return null;
+  var parteEspr = s.slice(0, idx); // ex: '2011224'
+  var skuMesa   = s.slice(idx + 1); // ex: '021224'
+  // Extrai qtd numérica do início (pode ser 1, 2, 3...)
+  var match = parteEspr.match(/^(\d+?)(\d{6})$/); // qtd + 6 dígitos de SKU
+  if (!match) {
+    // Tenta com SKU de tamanho variável: primeiro dígito = qtd, resto = SKU
+    var qtdEspr = parseInt(parteEspr[0], 10);
+    var skuEspr = parteEspr.slice(1);
+    if (isNaN(qtdEspr) || !skuEspr) return null;
+    return [
+      { sku: skuEspr,  qty: qtdEspr * qtdPedido },
+      { sku: skuMesa,  qty: 1      * qtdPedido }
+    ];
+  }
+  return [
+    { sku: match[2], qty: parseInt(match[1], 10) * qtdPedido },
+    { sku: skuMesa,  qty: 1 * qtdPedido }
+  ];
+}
+
 function extrairSku(item){
   if(!item)return'';
   if(item.codigo)return String(item.codigo);
@@ -245,11 +273,25 @@ function calcularVendas(skuSet, dataIni, dataFim){
     if(dt<dtIni||dt>dtFim)return;
     var itens=pedido.itens||pedido.item||[];
     itens.forEach(function(item){
-      var sku=extrairSku(item);
-      if(!sku||!skuSet[sku])return;
-      var qty=parseFloat(item.quantidade||item.qtde||0);
-      vm[sku]=(vm[sku]||0)+qty;
-      if(dt>=corte7d)v7[sku]=(v7[sku]||0)+qty;
+      var codigo=extrairSku(item);
+      if(!codigo)return;
+      var qtdItem=parseFloat(item.quantidade||item.qtde||0);
+
+      // Tenta desmembrar kit
+      var componentes=desmembrarKit(codigo, qtdItem);
+      if(componentes){
+        // É um kit — distribui pelas SKUs componentes
+        componentes.forEach(function(c){
+          if(!skuSet[c.sku])return;
+          vm[c.sku]=(vm[c.sku]||0)+c.qty;
+          if(dt>=corte7d)v7[c.sku]=(v7[c.sku]||0)+c.qty;
+        });
+      } else {
+        // Produto simples
+        if(!skuSet[codigo])return;
+        vm[codigo]=(vm[codigo]||0)+qtdItem;
+        if(dt>=corte7d)v7[codigo]=(v7[codigo]||0)+qtdItem;
+      }
     });
   });
   return{vendasMap:vm,vendas7dMap:v7};
@@ -484,7 +526,7 @@ async function syncDados(){
 
     // 2b. Buscar cada pedido individualmente — lotes de 3 com 400ms de delay (rate limit: 3 req/s)
     pedidosBrutos=[];
-    var LOTE=3, DELAY=400;
+    var LOTE=3, DELAY=500;
     function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
     for(var i=0;i<listaIds.length;i+=LOTE){
       if(i>0) await sleep(DELAY);
@@ -518,6 +560,22 @@ async function syncDados(){
     // 3. Calcular vendas no período padrão
     var skuSet={};
     produtos.forEach(function(p){skuSet[String(p.codigo)]=true;});
+
+    // Log de diagnóstico: compara SKUs dos itens com skuSet
+    var skusNosItens={};
+    pedidosBrutos.forEach(function(pedido){
+      var itens=pedido.itens||pedido.item||[];
+      itens.forEach(function(item){
+        var s=extrairSku(item);
+        if(s)skusNosItens[s]=true;
+      });
+    });
+    var skusItensArr=Object.keys(skusNosItens);
+    log('[SKUs nos itens] total='+skusItensArr.length+' | exemplos: '+skusItensArr.slice(0,5).join(', '));
+    log('[SKUs produtos]  total='+Object.keys(skuSet).length+' | exemplos: '+Object.keys(skuSet).slice(0,5).join(', '));
+    var matches=skusItensArr.filter(function(s){return skuSet[s];});
+    log('[Match SKUs] '+matches.length+' coincidencias | exemplos: '+matches.slice(0,5).join(', '));
+
     var calc=calcularVendas(skuSet,dataIni,dataFim);
     var vendasMap=calc.vendasMap;
     var vendas7dMap=calc.vendas7dMap;
@@ -530,7 +588,8 @@ async function syncDados(){
       var estoque=p.estoque&&p.estoque.saldoVirtualTotal!=null?p.estoque.saldoVirtualTotal:0;
       var vendasTotal=vendasMap[sku]||0;
       var vendas7d=vendas7dMap[sku]||0;
-      var mediaDia=config.periodo>0?vendasTotal/config.periodo:0;
+      var periodoReal=Math.max(1,Math.round((new Date(dataFim+'T23:59:59')-new Date(dataIni+'T00:00:00'))/86400000));
+      var mediaDia=periodoReal>0?vendasTotal/periodoReal:0;
       var estoqueMin=minimoCustom[sku]?minimoCustom[sku]:Math.ceil(mediaDia*config.minDias);
       var diasAteMin=mediaDia>0?Math.floor((estoque-estoqueMin)/mediaDia):999;
       var diasAteZero=mediaDia>0?Math.floor(estoque/mediaDia):999;
