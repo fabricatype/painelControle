@@ -402,7 +402,9 @@ async function syncDados(){
     // 1. Buscar produtos
     var produtos=[];
     var pagina=1;
+    function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
     while(true){
+      if(pagina>1) await sleep(400);
       var r=await blingGet('/produtos?pagina='+pagina+'&limite=100&situacao=A');
       var items=r.data||[];
       produtos=produtos.concat(items);
@@ -410,6 +412,15 @@ async function syncDados(){
       pagina++;if(pagina>30)break;
     }
     log('[Produtos] Total bruto: '+produtos.length);
+    if(produtos.length===0){
+      log('[Produtos] AVISO: nenhum produto. Verificando primeira pagina...');
+      var rDbg=await blingGet('/produtos?pagina=1&limite=5&situacao=A');
+      log('[Produtos raw] '+JSON.stringify(rDbg).slice(0,400));
+    } else {
+      // Loga campos do primeiro produto para entender estrutura
+      log('[Produto #1] chaves: '+Object.keys(produtos[0]).join(', '));
+      log('[Produto #1] codigo="'+produtos[0].codigo+'" nome="'+(produtos[0].nome||'').slice(0,40)+'"');
+    }
 
     produtos=produtos.filter(function(p){
       if(!p.codigo||!String(p.codigo).startsWith('0'))return false;
@@ -428,6 +439,7 @@ async function syncDados(){
     var listaPedidos=[];
     pagina=1;
     while(true){
+      if(pagina>1) await sleep(400);
       var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
       var ip=rp.data||[];
       listaPedidos=listaPedidos.concat(ip);
@@ -438,24 +450,27 @@ async function syncDados(){
     log('[Pedidos] Lista: '+listaIds.length+' pedidos, buscando itens...');
     tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos ('+listaIds.length+')...</td></tr>';
 
-    // 2b. Buscar cada pedido individualmente para obter os itens
-    // Processa em lotes de 10 paralelos para não sobrecarregar
+    // 2b. Buscar cada pedido individualmente — lotes de 3 com 400ms de delay (rate limit: 3 req/s)
     pedidosBrutos=[];
-    var LOTE=10;
+    var LOTE=3, DELAY=400;
+    function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
     for(var i=0;i<listaIds.length;i+=LOTE){
+      if(i>0) await sleep(DELAY);
       var lote=listaIds.slice(i,i+LOTE);
       var resultados=await Promise.all(lote.map(function(ref){
         return blingGet('/pedidos/vendas/'+ref.id).then(function(res){
-          var pedido=res.data||res;
-          // Garante que a data da listagem seja usada se o detalhe não tiver
-          if(!pedido.data&&ref.data)pedido.data=ref.data;
-          return pedido;
-        }).catch(function(){return null;});
+          if(res&&res.data&&!res.data.error){
+            var pedido=res.data;
+            if(!pedido.data&&ref.data)pedido.data=ref.data;
+            return pedido;
+          }
+          log('[Pedido erro] id='+ref.id+' | '+JSON.stringify(res).slice(0,150));
+          return null;
+        }).catch(function(e){return null;});
       }));
       resultados.forEach(function(p){if(p)pedidosBrutos.push(p);});
-      // Atualiza progresso
       var pct=Math.min(i+LOTE,listaIds.length);
-      tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos... '+pct+'/'+listaIds.length+'</td></tr>';
+      tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens... '+pct+'/'+listaIds.length+'</td></tr>';
     }
 
     // Log da estrutura do primeiro pedido detalhado
