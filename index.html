@@ -334,6 +334,11 @@ function renderPainel(){
     '<h1>&#128230; Controle de Estoque</h1>'+
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
     '<span id="lastSync" style="font-size:12px;color:#888"></span>'+
+    '<span style="font-size:12px;color:#aaa">Periodo:</span>'+
+    '<input type="date" id="periodoIni" value="'+inicio+'" style="padding:5px 8px;font-size:12px"/>'+
+    '<span style="font-size:12px;color:#aaa">a</span>'+
+    '<input type="date" id="periodoFim" value="'+hoje+'" style="padding:5px 8px;font-size:12px"/>'+
+    '<button class="primary" onclick="aplicarPeriodo()" style="padding:6px 14px;font-size:12px">Aplicar</button>'+
     '<button onclick="toggleDebug()" style="font-size:11px;padding:5px 10px;color:#aaa">Debug</button>'+
     '<button onclick="syncDados()">&#x1F504; Atualizar</button>'+
     '<button onclick="openConfig()">&#x2699;&#xFE0F; Config</button>'+
@@ -348,11 +353,7 @@ function renderPainel(){
     '<div class="chart-wrap">'+
     '<div class="chart-header">'+
     '<h3>&#x1F4CA; Vendas por Produto</h3>'+
-    '<div class="date-range">'+
-    '<span>De:</span><input type="date" id="chartDe" value="'+inicio+'" onchange="renderChart()"/>'+
-    '<span>Ate:</span><input type="date" id="chartAte" value="'+hoje+'" onchange="renderChart()"/>'+
     '<select id="chartCat" onchange="renderChart()"><option value="">Todas as categorias</option></select>'+
-    '</div>'+
     '</div>'+
     '<canvas id="grafico" height="90"></canvas>'+
     '</div>'+
@@ -379,6 +380,37 @@ function toggleDebug(){
   var b=document.getElementById('debugBox');
   if(b)b.style.display=b.style.display==='block'?'none':'block';
 }
+
+// Recalcula vendas, tabela e gráfico para o período selecionado sem buscar a API novamente
+function aplicarPeriodo(){
+  if(!pedidosBrutos.length){alert('Clique em Atualizar primeiro para carregar os dados.');return;}
+  var dataIni=(document.getElementById('periodoIni')||{}).value||daysAgoStr(config.periodo);
+  var dataFim=(document.getElementById('periodoFim')||{}).value||todayStr();
+  var periodo=Math.max(1,Math.round((new Date(dataFim+'T23:59:59')-new Date(dataIni+'T00:00:00'))/86400000));
+
+  var skuSet={};
+  dados.forEach(function(d){skuSet[d.sku]=true;});
+  var calc=calcularVendas(skuSet,dataIni,dataFim);
+  var vendasMap=calc.vendasMap;
+  var vendas7dMap=calc.vendas7dMap;
+
+  dados=dados.map(function(d){
+    var vendasTotal=vendasMap[d.sku]||0;
+    var vendas7d=vendas7dMap[d.sku]||0;
+    var mediaDia=periodo>0?vendasTotal/periodo:0;
+    var estoqueMin=minimoCustom[d.sku]?minimoCustom[d.sku]:Math.ceil(mediaDia*config.minDias);
+    var diasAteMin=mediaDia>0?Math.floor((d.estoque-estoqueMin)/mediaDia):999;
+    var diasAteZero=mediaDia>0?Math.floor(d.estoque/mediaDia):999;
+    var status=calcStatus(d.estoque,estoqueMin,diasAteZero,mediaDia);
+    var infoProd=mediaDia>0?calcDataPronta(diasAteMin):null;
+    return Object.assign({},d,{vendasTotal,vendas7d,mediaDia,estoqueMin,diasAteMin,diasAteZero,status,infoProd});
+  });
+
+  updateCards(); renderChart(); renderTable();
+  var ls=document.getElementById('lastSync');
+  if(ls) ls.textContent='Periodo: '+dataIni.split('-').reverse().join('/')+' a '+dataFim.split('-').reverse().join('/');
+}
+
 function log(msg){
   console.log(msg);
   var b=document.getElementById('debugBox');
@@ -550,8 +582,8 @@ function updateCards(){
 function renderChart(){
   var canvas=document.getElementById('grafico');
   if(!canvas)return;
-  var dataIni=(document.getElementById('chartDe')||{}).value||daysAgoStr(config.periodo);
-  var dataFim=(document.getElementById('chartAte')||{}).value||todayStr();
+  var dataIni=(document.getElementById('periodoIni')||{}).value||daysAgoStr(config.periodo);
+  var dataFim=(document.getElementById('periodoFim')||{}).value||todayStr();
   var catFiltro=(document.getElementById('chartCat')||{}).value||'';
 
   var skuSet={};
