@@ -78,7 +78,7 @@ button.primary:hover{background:#6b69e8}
 </head>
 <body>
 <div id="root"><div class="loading" style="padding:100px;font-size:16px">Verificando autenticacao...</div></div>
- 
+
 <div class="modal-bg" id="modalConfig">
   <div class="modal">
     <h2>Configuracoes</h2>
@@ -106,7 +106,7 @@ button.primary:hover{background:#6b69e8}
     </div>
   </div>
 </div>
- 
+
 <script>
 var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":15,"diasProducao":3}');
 if (!config.diasProducao) config.diasProducao = 3;
@@ -120,7 +120,7 @@ var sortCol = 'status', sortDir = 1;
 var chartPeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
 var tablePeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
 var chartOrigem = 'todos', tableOrigem = 'todos';
- 
+
 // ─── FERIADOS ─────────────────────────────────────────────────────────────────
 function feriadosAno(ano){
   var a=ano%19,b=Math.floor(ano/100),c=ano%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
@@ -146,7 +146,7 @@ function calcDataPronta(diasAteMin){
   var pr=avancarDiasTrancado(fp,1);
   return{dataFimProducao:fp,dataPronta:pr,diasCorridos:Math.round((pr-hoje)/86400000),aPrazo:pr<=lim};
 }
- 
+
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function todayStr(){return new Date().toISOString().split('T')[0];}
 function daysAgoStr(n){var d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split('T')[0];}
@@ -154,7 +154,7 @@ function fmtDate(s){if(!s)return'-';var p=s.split('-');return p.length===3?p[2]+
 function dateToStr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function calcStatus(est,min,diasZ,media){if(media<=0)return'ok';if(est<=min||diasZ<=7)return'critico';if(diasZ<=30)return'atencao';return'ok';}
 function periodoEmDias(ini,fim){return Math.max(1,Math.round((new Date(fim+'T23:59:59')-new Date(ini+'T00:00:00'))/86400000));}
- 
+
 // ─── PERÍODO ──────────────────────────────────────────────────────────────────
 var PERIOD_OPTS=[
   {id:'1d',label:'24h',dias:1},{id:'7d',label:'7d',dias:7},{id:'30d',label:'1m',dias:30},
@@ -179,7 +179,7 @@ function applyCustomPeriod(which){
   if(de&&ate)setPeriodo(which,'custom',de,ate);
 }
 function toggleCustom(which){var p=which==='chart'?chartPeriodo:tablePeriodo;if(p.tipo!=='custom')setPeriodo(which,'custom',p.ini,p.fim);}
- 
+
 function periodBtns(which){
   var p=which==='chart'?chartPeriodo:tablePeriodo;
   var btns=PERIOD_OPTS.map(function(o){
@@ -196,7 +196,7 @@ function periodBtns(which){
     '<button class="pbtn primary" onclick="applyCustomPeriod(\''+which+'\')" style="padding:4px 10px">Aplicar</button>'+
     '</span></div>';
 }
- 
+
 // ─── ORIGEM ───────────────────────────────────────────────────────────────────
 function setOrigem(which,val){
   if(which==='chart'){chartOrigem=val;updateOrigemUI('chart');renderChart();}
@@ -214,7 +214,7 @@ function origemBtns(which){
     '<button id="'+which+'_org_fulfillment" class="obtn ful'+(val==='fulfillment'?' active':'')+'" onclick="setOrigem(\''+which+'\',\'fulfillment\')">Fulfillment</button>'+
     '</div>';
 }
- 
+
 // ─── KITS ─────────────────────────────────────────────────────────────────────
 function desmembrarKit(codigo,qtdPedido){
   if(!codigo||!String(codigo).startsWith('KT'))return null;
@@ -243,7 +243,7 @@ function extrairData(pedido){
   if(!raw)return new Date(0);
   try{return raw.includes('T')?new Date(raw):new Date(raw+'T12:00:00');}catch(e){return new Date(0);}
 }
- 
+
 // ─── CALCULAR VENDAS ──────────────────────────────────────────────────────────
 // Retorna vendasMap, vendas7dMap, vendasNormal, vendasFull por SKU
 function calcularVendas(skuSet,dataIni,dataFim,origem){
@@ -272,7 +272,7 @@ function calcularVendas(skuSet,dataIni,dataFim,origem){
   });
   return{vendasMap:vm,vendas7dMap:v7,vendasNormal:vn,vendasFull:vf};
 }
- 
+
 // ─── MODAIS ───────────────────────────────────────────────────────────────────
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -303,7 +303,7 @@ function saveMin(){
   localStorage.setItem('esq_min',JSON.stringify(minimoCustom));
   closeModal('modalMin');recalcularTabela();
 }
- 
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init(){
   try{var r=await fetch('/auth/status');var s=await r.json();if(s.authenticated)renderPainel();else renderLogin();}
@@ -316,7 +316,7 @@ function renderLogin(){
     '<p>Conecte sua conta Bling para visualizar em tempo real.</p>'+
     '<a href="/login"><button class="primary" style="padding:12px 32px;font-size:15px">Entrar com Bling</button></a></div>';
 }
- 
+
 function renderPainel(){
   document.getElementById('root').innerHTML=
     '<header>'+
@@ -394,16 +394,16 @@ function renderPainel(){
     '<tbody id="tbody"><tr><td colspan="14" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>'+
     '</table></div>';
 }
- 
+
 function toggleDebug(){var b=document.getElementById('debugBox');if(b)b.style.display=b.style.display==='block'?'none':'block';}
 function log(msg){console.log(msg);var b=document.getElementById('debugBox');if(b){b.innerHTML+=msg+'<br>';b.scrollTop=b.scrollHeight;}}
- 
+
 async function blingGet(path){
   var r=await fetch('/api/bling'+path);
   if(r.status===401){renderLogin();throw new Error('Sessao expirada');}
   return r.json();
 }
- 
+
 // ─── SYNC ─────────────────────────────────────────────────────────────────────
 async function syncDados(){
   var tbody=document.getElementById('tbody');
@@ -426,7 +426,7 @@ async function syncDados(){
       return!(p.nome||'').toLowerCase().includes('kit');
     });
     log('[Produtos] filtrado:'+produtos.length);
- 
+
     // Pedidos
     tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando pedidos...</td></tr>';
     var hoje=new Date(),dataFim=hoje.toISOString().split('T')[0];
@@ -446,24 +446,16 @@ async function syncDados(){
       log('[Pedidos] sit'+SITS[si].id+':'+listaIds.length);
     }
     // Deduplicação: fulfillment tem prioridade (não substituir por normal)
-    var seen={};
-    listaIds=listaIds.filter(function(p){
-      if(seen[p.id]){
-        // Se já existe como 'normal' e agora é 'fulfillment', atualiza a origem
-        var idx=listaIds.findIndex(function(x){return x.id===p.id;});
-        return false;
-      }
-      seen[p.id]=p;
-      return true;
-    });
-    // Garante que fulfillment sobrescreve normal se o mesmo pedido aparecer nos dois
+    // Não deduplica — marca origem pelo situacao.id que vem no detalhe do pedido
+    // situacao 529911 = fulfillment, qualquer outra = normal
     var idMap={};
     listaIds.forEach(function(p){
+      // Se o mesmo ID aparece duas vezes, fulfillment tem prioridade
       if(!idMap[p.id]||p.origem==='fulfillment') idMap[p.id]=p;
     });
-    listaIds=Object.values(idMap);
+    listaIds=Object.keys(idMap).map(function(k){return idMap[k];});
     log('[Pedidos] dedup:'+listaIds.length);
- 
+
     // Itens
     pedidosBrutos=[];
     for(var i=0;i<listaIds.length;i+=3){
@@ -471,7 +463,14 @@ async function syncDados(){
       var lote=listaIds.slice(i,i+3);
       var res=await Promise.all(lote.map(function(ref){
         return blingGet('/pedidos/vendas/'+ref.id).then(function(rs){
-          if(rs&&rs.data&&!rs.data.error){rs.data._origem=ref.origem;if(!rs.data.data)rs.data.data=ref.data;return rs.data;}
+          if(rs&&rs.data&&!rs.data.error){
+            var pedido=rs.data;
+            if(!pedido.data)pedido.data=ref.data;
+            // Determina origem pelo situacao.id real do pedido
+            var sitId=pedido.situacao&&pedido.situacao.id;
+            pedido._origem=sitId===529911?'fulfillment':'normal';
+            return pedido;
+          }
           return null;
         }).catch(function(){return null;});
       }));
@@ -481,7 +480,7 @@ async function syncDados(){
     var nFull=pedidosBrutos.filter(function(p){return p._origem==='fulfillment';}).length;
     var nNorm=pedidosBrutos.filter(function(p){return p._origem==='normal';}).length;
     log('[Pedidos] comItens:'+pedidosBrutos.length+' | normal:'+nNorm+' | fulfillment:'+nFull);
- 
+
     // dadosBase
     var categorias={};
     dadosBase=produtos.map(function(p){
@@ -497,7 +496,7 @@ async function syncDados(){
       sel.innerHTML='<option value="">Todas as categorias</option>';
       Object.keys(categorias).sort().forEach(function(c){sel.innerHTML+='<option value="'+c+'">'+c+'</option>';});
     });
- 
+
     recalcularTabela();
     renderChart();
     var ls=document.getElementById('lastSync');
@@ -508,7 +507,7 @@ async function syncDados(){
     if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">Erro: '+err.message+'</td></tr>';
   }
 }
- 
+
 // ─── RECALCULAR ───────────────────────────────────────────────────────────────
 function recalcularTabela(){
   if(!dadosBase.length)return;
@@ -516,7 +515,7 @@ function recalcularTabela(){
   var calc=calcularVendas(skuSet,tablePeriodo.ini,tablePeriodo.fim,tableOrigem);
   var vm=calc.vendasMap,v7=calc.vendas7dMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var periodo=periodoEmDias(tablePeriodo.ini,tablePeriodo.fim);
- 
+
   dados=dadosBase.map(function(b){
     var vt=vm[b.sku]||0,v7d=v7[b.sku]||0,vnorm=vn[b.sku]||0,vful=vf[b.sku]||0;
     var media=vt/periodo;
@@ -527,7 +526,7 @@ function recalcularTabela(){
     var infoProd=media>0?calcDataPronta(diasMin):null;
     return Object.assign({},b,{vendasTotal:vt,vendas7d:v7d,vendasNormal:vnorm,vendasFull:vful,mediaDia:media,estoqueMin,diasAteMin:diasMin,diasAteZero:diasZero,status,infoProd});
   });
- 
+
   updateCards();
   renderDonut();
   renderTopSkus();
@@ -535,7 +534,7 @@ function recalcularTabela(){
   updatePeriodUI('table');
   updateOrigemUI('table');
 }
- 
+
 // ─── CARDS ────────────────────────────────────────────────────────────────────
 function updateCards(){
   var el=function(id){return document.getElementById(id);};
@@ -552,7 +551,7 @@ function updateCards(){
   if(el('cVFull'))el('cVFull').textContent=vf;
   if(el('cVFullPct'))el('cVFullPct').textContent=pct+'%';
 }
- 
+
 // ─── DONUT ────────────────────────────────────────────────────────────────────
 function renderDonut(){
   var canvas=document.getElementById('donutChart');if(!canvas)return;
@@ -578,16 +577,16 @@ function renderDonut(){
     }
   });
 }
- 
+
 // ─── TOP SKUs POR CANAL ───────────────────────────────────────────────────────
 function renderTopSkus(){
   var el=document.getElementById('topSkus');if(!el)return;
   var comVenda=dados.filter(function(d){return d.vendasTotal>0;});
   if(!comVenda.length){el.innerHTML='<div style="color:#aaa;padding:20px 0">Nenhuma venda no periodo</div>';return;}
- 
+
   var topNormal=comVenda.slice().sort(function(a,b){return b.vendasNormal-a.vendasNormal;}).slice(0,5);
   var topFull=comVenda.slice().sort(function(a,b){return b.vendasFull-a.vendasFull;}).slice(0,5);
- 
+
   function skuRow(d,canal){
     var v=canal==='normal'?d.vendasNormal:d.vendasFull;
     var total=d.vendasTotal;
@@ -604,7 +603,7 @@ function renderTopSkus(){
       '<div class="pct-bar"><div class="pct-fill-n" style="width:'+pctN+'%"></div><div class="pct-fill-f" style="width:'+pctF+'%"></div></div>'+
       '</div>';
   }
- 
+
   var html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
     '<div><div style="font-size:11px;font-weight:600;color:#16a34a;margin-bottom:8px">TOP NORMAL</div>'+
     topNormal.map(function(d){return skuRow(d,'normal');}).join('')+'</div>'+
@@ -613,7 +612,7 @@ function renderTopSkus(){
     '</div>';
   el.innerHTML=html;
 }
- 
+
 // ─── GRÁFICO BARRAS ───────────────────────────────────────────────────────────
 function renderChart(){
   var canvas=document.getElementById('grafico');if(!canvas)return;
@@ -621,18 +620,18 @@ function renderChart(){
   var skuSet={};dadosBase.forEach(function(d){skuSet[d.sku]=true;});
   var calc=calcularVendas(skuSet,chartPeriodo.ini,chartPeriodo.fim,chartOrigem);
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
- 
+
   var base=catFiltro?dadosBase.filter(function(d){return d.categoria===catFiltro;}):dadosBase;
   var comVenda=base.filter(function(d){return(vm[d.sku]||0)>0;});
   var top=comVenda.length>0
     ?comVenda.slice().sort(function(a,b){return(vm[b.sku]||0)-(vm[a.sku]||0);}).slice(0,20)
     :base.slice().sort(function(a,b){return b.estoque-a.estoque;}).slice(0,20);
- 
+
   var statusMap={};dados.forEach(function(d){statusMap[d.sku]=d.status;});
   var mostrandoVendas=comVenda.length>0;
- 
+
   if(chartObj)chartObj.destroy();
- 
+
   var datasets;
   if(mostrandoVendas && chartOrigem==='todos'){
     // Barras agrupadas: normal + full
@@ -649,7 +648,7 @@ function renderChart(){
       borderRadius:4
     }];
   }
- 
+
   chartObj=new Chart(canvas,{
     type:'bar',
     data:{labels:top.map(function(d){return d.sku;}),datasets:datasets},
@@ -671,7 +670,7 @@ function renderChart(){
   updatePeriodUI('chart');
   updateOrigemUI('chart');
 }
- 
+
 // ─── SORT ─────────────────────────────────────────────────────────────────────
 function sortBy(col){
   if(sortCol===col)sortDir*=-1;
@@ -682,7 +681,7 @@ function sortBy(col){
   });
   renderTable();
 }
- 
+
 // ─── TABELA ───────────────────────────────────────────────────────────────────
 function renderTable(){
   var busca=((document.getElementById('busca')||{}).value||'').toLowerCase();
@@ -707,7 +706,7 @@ function renderTable(){
   });
   var tbody=document.getElementById('tbody');if(!tbody)return;
   if(!rows.length){tbody.innerHTML='<tr><td colspan="14" class="empty">Nenhum produto encontrado</td></tr>';return;}
- 
+
   function badge(s){
     if(s==='critico')return'<span class="badge critico"><span class="dot"></span>Critico</span>';
     if(s==='atencao')return'<span class="badge atencao"><span class="dot"></span>Atencao</span>';
@@ -733,7 +732,7 @@ function renderTable(){
       '<div class="pct-fill-f" style="width:'+(100-pn)+'%"></div>'+
       '</div>';
   }
- 
+
   var html='';
   rows.forEach(function(d){
     var minLabel=d.estoqueMin>0?d.estoqueMin:'-';
@@ -763,7 +762,7 @@ function renderTable(){
   });
   tbody.innerHTML=html;
 }
- 
+
 function toggleNome(td){
   var span=td.querySelector('span');if(!span)return;
   if(span.style.whiteSpace==='normal'){
@@ -772,7 +771,7 @@ function toggleNome(td){
     span.style.whiteSpace='normal';span.style.overflow='visible';span.style.textOverflow='unset';td.style.maxWidth='360px';
   }
 }
- 
+
 init();
 </script>
 </body>
