@@ -518,19 +518,24 @@ async function syncDados(){
     var dataIni=new Date(hoje.getTime()-config.periodo*86400000).toISOString().split('T')[0];
 
     // 2a. Buscar lista de pedidos (sem itens)
+    // Situações válidas: 15 = NF emitida, 529911 = Fulfillment
+    var SITUACOES_VALIDAS = [15, 529911];
     var listaIds=[];
-    var listaPedidos=[];
-    pagina=1;
-    while(true){
-      if(pagina>1) await sleep(400);
-      var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
-      var ip=rp.data||[];
-      listaPedidos=listaPedidos.concat(ip);
-      ip.forEach(function(p){if(p.id)listaIds.push({id:p.id,data:p.data});});
-      if(ip.length<100)break;
-      pagina++;if(pagina>20)break;
+    for(var si=0; si<SITUACOES_VALIDAS.length; si++){
+      if(si>0) await sleep(400);
+      var sit=SITUACOES_VALIDAS[si];
+      pagina=1;
+      while(true){
+        if(pagina>1) await sleep(400);
+        var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao='+sit+'&pagina='+pagina+'&limite=100');
+        var ip=rp.data||[];
+        ip.forEach(function(p){if(p.id)listaIds.push({id:p.id,data:p.data});});
+        if(ip.length<100)break;
+        pagina++;if(pagina>20)break;
+      }
+      log('[Pedidos] Situacao '+sit+': '+listaIds.length+' pedidos acumulados');
     }
-    log('[Pedidos] Lista: '+listaIds.length+' pedidos, buscando itens...');
+    log('[Pedidos] Lista total: '+listaIds.length+' pedidos, buscando itens...');
     tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos ('+listaIds.length+')...</td></tr>';
 
     // 2b. Buscar cada pedido individualmente — lotes de 3 com 400ms de delay (rate limit: 3 req/s)
