@@ -20,7 +20,8 @@ header h1{font-size:16px;font-weight:600}
 .top-bar{padding:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .table-wrap{padding:0 24px 32px;overflow-x:auto}
 table{width:100%;background:#fff;border-radius:10px;border:1px solid #e5e5e5;border-collapse:separate;border-spacing:0;overflow:hidden}
-th{background:#fafafa;padding:10px 14px;text-align:left;font-size:12px;font-weight:500;color:#666;border-bottom:1px solid #e5e5e5;white-space:nowrap}
+th{background:#fafafa;padding:10px 14px;text-align:left;font-size:12px;font-weight:500;color:#666;border-bottom:1px solid #e5e5e5;white-space:nowrap;user-select:none}
+th[onclick]:hover{background:#f0eeff;color:#7c7af8}
 td{padding:9px 14px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#fafafa}
@@ -102,6 +103,8 @@ var dados = [];
 var chartObj = null;
 var editSku = null;
 var pedidosBrutos = [];
+var sortCol = 'status';   // coluna atual de ordenação
+var sortDir = 1;          // 1=asc, -1=desc
 
 // ─── FERIADOS NACIONAIS BRASIL (ano atual e próximo) ───────────────────────
 // Formato: "MM-DD" (fixos) + calculados por ano
@@ -407,11 +410,17 @@ function renderPainel(){
     '</div>'+
     '<div class="table-wrap"><table>'+
     '<thead><tr>'+
-    '<th>Status</th><th>SKU</th><th>Produto</th><th>Categoria</th>'+
-    '<th>Vendas 7d</th><th>Vendas Total</th><th>Media/dia</th><th>Estoque</th>'+
-    '<th>Est. Minimo</th>'+
-    '<th title="Data prevista para atingir o estoque minimo">Atinge Minimo</th>'+
-    '<th title="Data prevista para zerar o estoque">Zera Estoque</th>'+
+    '<th onclick="sortBy('status')" style="cursor:pointer" title="Ordenar">Status <span id="srt_status"></span></th>'+
+    '<th onclick="sortBy('sku')" style="cursor:pointer">SKU <span id="srt_sku"></span></th>'+
+    '<th>Produto</th>'+
+    '<th onclick="sortBy('categoria')" style="cursor:pointer">Categoria <span id="srt_categoria"></span></th>'+
+    '<th onclick="sortBy('vendas7d')" style="cursor:pointer;text-align:right">Vendas 7d <span id="srt_vendas7d"></span></th>'+
+    '<th onclick="sortBy('vendasTotal')" style="cursor:pointer;text-align:right">Vendas Total <span id="srt_vendasTotal"></span></th>'+
+    '<th onclick="sortBy('mediaDia')" style="cursor:pointer;text-align:right">Media/dia <span id="srt_mediaDia"></span></th>'+
+    '<th onclick="sortBy('estoque')" style="cursor:pointer;text-align:right">Estoque <span id="srt_estoque"></span></th>'+
+    '<th onclick="sortBy('estoqueMin')" style="cursor:pointer;text-align:right">Est. Minimo <span id="srt_estoqueMin"></span></th>'+
+    '<th onclick="sortBy('diasAteMin')" style="cursor:pointer" title="Data prevista para atingir o estoque minimo">Atinge Minimo <span id="srt_diasAteMin"></span></th>'+
+    '<th onclick="sortBy('diasAteZero')" style="cursor:pointer" title="Data prevista para zerar o estoque">Zera Estoque <span id="srt_diasAteZero"></span></th>'+
     '<th title="Data em que o lote ficara pronto ('+config.diasProducao+'du producao + trancado)">Pronto em</th>'+
     '</tr></thead>'+
     '<tbody id="tbody"><tr><td colspan="12" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>'+
@@ -672,14 +681,31 @@ function renderChart(){
       responsive:true,
       plugins:{
         legend:{position:'top'},
-        tooltip:{callbacks:{afterLabel:function(ctx){
-          var d=top[ctx.dataIndex];
-          return'Media/dia:'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'  Estoque:'+d.estoque;
-        }}}
+        tooltip:{callbacks:{
+          title:function(items){
+            var d=top[items[0].dataIndex];
+            return d.nome; // nome completo no tooltip
+          },
+          label:function(ctx){
+            var d=top[ctx.dataIndex];
+            return' Vendas: '+ctx.parsed.y+'  |  Media/dia: '+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'  |  Estoque: '+d.estoque;
+          }
+        }}
       },
       scales:{y:{beginAtZero:true,title:{display:true,text:'Unidades'}}}
     }
   });
+}
+
+function sortBy(col){
+  if(sortCol===col){ sortDir*=-1; }
+  else { sortCol=col; sortDir=col==='status'||col==='sku'||col==='categoria'?1:-1; }
+  // Atualiza indicadores visuais
+  ['status','sku','categoria','vendas7d','vendasTotal','mediaDia','estoque','estoqueMin','diasAteMin','diasAteZero'].forEach(function(c){
+    var el=document.getElementById('srt_'+c);
+    if(el)el.textContent=c===sortCol?(sortDir===1?'▲':'▼'):'';
+  });
+  renderTable();
 }
 
 function renderTable(){
@@ -697,9 +723,20 @@ function renderTable(){
   });
 
   rows.sort(function(a,b){
-    var ord={critico:0,atencao:1,ok:2};
-    if(ord[a.status]!==ord[b.status])return ord[a.status]-ord[b.status];
-    return a.diasAteZero-b.diasAteZero;
+    var av=a[sortCol], bv=b[sortCol];
+    // Status tem ordem especial
+    if(sortCol==='status'){
+      var ord={critico:0,atencao:1,ok:2};
+      av=ord[a.status]; bv=ord[b.status];
+    }
+    // Dias 999 = sem venda, sempre vai pro fim
+    if((sortCol==='diasAteMin'||sortCol==='diasAteZero')){
+      if(av>=999&&bv>=999)return 0;
+      if(av>=999)return 1;
+      if(bv>=999)return -1;
+    }
+    if(typeof av==='string') return sortDir*av.localeCompare(bv);
+    return sortDir*((av||0)-(bv||0));
   });
 
   var tbody=document.getElementById('tbody');
@@ -744,7 +781,9 @@ function renderTable(){
       '<tr>'+
       '<td>'+badge(d.status)+'</td>'+
       '<td><span class="tag">'+d.sku+'</span></td>'+
-      '<td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+nomeEsc+'">'+d.nome+'</td>'+
+      '<td style="max-width:220px;cursor:pointer" onclick="toggleNome(this)" title="Clique para expandir">'+
+      '<span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.nome+'</span>'+
+      '</td>'+
       '<td style="color:#888;font-size:12px">'+d.categoria+'</td>'+
       '<td style="text-align:right">'+(d.vendas7d>0?'<strong>'+d.vendas7d+'</strong>':'<span style="color:#ccc">0</span>')+'</td>'+
       '<td style="text-align:right">'+d.vendasTotal+'</td>'+
@@ -757,6 +796,23 @@ function renderTable(){
       '</tr>';
   });
   tbody.innerHTML=html;
+}
+
+// Expande/colapsa nome na célula
+function toggleNome(td){
+  var span=td.querySelector('span');
+  if(!span)return;
+  if(span.style.whiteSpace==='normal'){
+    span.style.whiteSpace='nowrap';
+    span.style.overflow='hidden';
+    span.style.textOverflow='ellipsis';
+    td.style.maxWidth='220px';
+  } else {
+    span.style.whiteSpace='normal';
+    span.style.overflow='visible';
+    span.style.textOverflow='unset';
+    td.style.maxWidth='400px';
+  }
 }
 
 init();
