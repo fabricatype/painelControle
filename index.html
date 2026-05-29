@@ -16,7 +16,7 @@ header h1{font-size:16px;font-weight:600}
 .card .lbl{font-size:12px;color:#888}
 .card.critico .num{color:#dc2626}.card.atencao .num{color:#d97706}.card.ok .num{color:#16a34a}
 .chart-wrap{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:20px;margin:0 24px 16px}
-.chart-wrap h3{font-size:14px;font-weight:600;margin-bottom:16px;color:#444}
+.chart-wrap h3{font-size:14px;font-weight:600;color:#444}
 .top-bar{padding:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .table-wrap{padding:0 24px 32px;overflow-x:auto}
 table{width:100%;background:#fff;border-radius:10px;border:1px solid #e5e5e5;border-collapse:separate;border-spacing:0;overflow:hidden}
@@ -54,7 +54,9 @@ button.primary:hover{background:#6b69e8}
 .modal .row{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
 .btn-edit{background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:4px;font-size:12px;color:#7c7af8;font-weight:600}
 .btn-edit:hover{background:#EEEDFE}
-.date-range{display:flex;align-items:center;gap:6px;font-size:13px;color:#666}
+.chart-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.date-range{display:flex;align-items:center;gap:6px;font-size:13px;color:#555;flex-wrap:wrap}
+.debug-box{background:#1e1e1e;color:#aaffaa;font-family:monospace;font-size:11px;padding:12px;border-radius:8px;margin:0 24px 16px;max-height:200px;overflow:auto;display:none}
 </style>
 </head>
 <body>
@@ -94,14 +96,12 @@ var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
 var dados = [];
 var chartObj = null;
 var editSku = null;
+// Guarda pedidos brutos para reprocessar no gráfico por período
+var pedidosBrutos = [];
 
-// Datas padrão: início do dia atual até agora
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
+function todayStr() { return new Date().toISOString().split('T')[0]; }
 function daysAgoStr(n) {
-  var d = new Date();
-  d.setDate(d.getDate() - n);
+  var d = new Date(); d.setDate(d.getDate() - n);
   return d.toISOString().split('T')[0];
 }
 
@@ -138,9 +138,7 @@ function saveMin() {
   localStorage.setItem('esq_min', JSON.stringify(minimoCustom));
   closeModal('modalMin');
   recalcularProduto(editSku);
-  updateCards();
-  renderChart();
-  renderTable();
+  updateCards(); renderChart(); renderTable();
 }
 
 function recalcularProduto(sku) {
@@ -161,34 +159,67 @@ function calcStatus(estoque, estoqueMin, diasAteZero, mediaDia) {
   return 'ok';
 }
 
-// Retorna data formatada para exibição: "dd/mm/aaaa"
 function formatDate(dateStr) {
-  if (!dateStr || dateStr === '999') return '-';
-  var parts = dateStr.split('-');
-  if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
-  return dateStr;
+  if (!dateStr) return '-';
+  var p = dateStr.split('-');
+  return p.length === 3 ? p[2]+'/'+p[1]+'/'+p[0] : dateStr;
 }
 
-// Calcula a data futura somando diasRestantes a hoje
 function dataFutura(dias) {
   if (dias >= 999 || dias < 0) return null;
-  var d = new Date();
-  d.setDate(d.getDate() + Math.floor(dias));
+  var d = new Date(); d.setDate(d.getDate() + Math.floor(dias));
   return d.toISOString().split('T')[0];
+}
+
+// Extrai SKU do item do pedido — tenta vários campos que a API pode retornar
+function extrairSku(item) {
+  if (!item) return '';
+  // Tenta item.codigo direto (listagem simplificada)
+  if (item.codigo) return String(item.codigo);
+  // Tenta item.produto.codigo (objeto aninhado)
+  if (item.produto && item.produto.codigo) return String(item.produto.codigo);
+  // Tenta item.sku
+  if (item.sku) return String(item.sku);
+  return '';
+}
+
+// Extrai data do pedido normalizando fuso horário
+function extrairData(pedido) {
+  var raw = pedido.data || pedido.dataPedido || pedido.dataEmissao || '';
+  if (!raw) return new Date(0);
+  try {
+    // Se vier só "YYYY-MM-DD", força meio-dia local para não virar dia anterior por fuso
+    return raw.includes('T') ? new Date(raw) : new Date(raw + 'T12:00:00');
+  } catch(e) { return new Date(0); }
+}
+
+// Calcula vendasMap e vendas7dMap a partir de pedidosBrutos filtrados por período e categoria
+function calcularVendas(skuSet, dataIni, dataFim) {
+  var dtIni = new Date(dataIni + 'T00:00:00');
+  var dtFim = new Date(dataFim + 'T23:59:59');
+  var corte7d = new Date(); corte7d.setDate(corte7d.getDate()-7); corte7d.setHours(0,0,0,0);
+  var vm = {}, v7 = {};
+  pedidosBrutos.forEach(function(pedido) {
+    var dt = extrairData(pedido);
+    if (dt < dtIni || dt > dtFim) return;
+    var itens = pedido.itens || pedido.item || [];
+    itens.forEach(function(item) {
+      var sku = extrairSku(item);
+      if (!sku || !skuSet[sku]) return;
+      var qty = parseFloat(item.quantidade || item.qtde || 0);
+      vm[sku] = (vm[sku]||0) + qty;
+      if (dt >= corte7d) v7[sku] = (v7[sku]||0) + qty;
+    });
+  });
+  return { vendasMap: vm, vendas7dMap: v7 };
 }
 
 async function init() {
   try {
     var r = await fetch('/auth/status');
     var s = await r.json();
-    if (s.authenticated) {
-      renderPainel();
-    } else {
-      renderLogin();
-    }
-  } catch(e) {
-    renderLogin();
-  }
+    if (s.authenticated) renderPainel(); else renderLogin();
+  } catch(e) { renderLogin(); }
 }
 
 function renderLogin() {
@@ -202,15 +233,14 @@ function renderLogin() {
 }
 
 function renderPainel() {
-  // Data padrão: hoje
   var hoje = todayStr();
-  var inicio30 = daysAgoStr(config.periodo);
-
+  var inicio = daysAgoStr(config.periodo);
   document.getElementById('root').innerHTML =
     '<header>' +
     '<h1>&#128230; Controle de Estoque</h1>' +
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
     '<span id="lastSync" style="font-size:12px;color:#888"></span>' +
+    '<button onclick="toggleDebug()" style="font-size:11px;padding:5px 10px;color:#aaa">Debug</button>' +
     '<button onclick="syncDados()">&#x1F504; Atualizar</button>' +
     '<button onclick="openConfig()">&#x2699;&#xFE0F; Config</button>' +
     '</div></header>' +
@@ -220,12 +250,14 @@ function renderPainel() {
     '<div class="card atencao"><div class="num" id="cAtencao">0</div><div class="lbl">Atencao</div></div>' +
     '<div class="card ok"><div class="num" id="cOk">0</div><div class="lbl">Estoque OK</div></div>' +
     '</div>' +
+    '<div id="debugBox" class="debug-box"></div>' +
     '<div class="chart-wrap">' +
-    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">' +
-    '<h3 style="margin:0">&#x1F4CA; Vendas por Produto no Periodo</h3>' +
+    '<div class="chart-header">' +
+    '<h3>&#x1F4CA; Vendas por Produto</h3>' +
     '<div class="date-range">' +
-    '<label style="margin:0">De: <input type="date" id="chartDe" value="' + inicio30 + '" onchange="renderChart()"/></label>' +
-    '<label style="margin:0">Ate: <input type="date" id="chartAte" value="' + hoje + '" onchange="renderChart()"/></label>' +
+    '<span>De:</span><input type="date" id="chartDe" value="'+inicio+'" onchange="renderChart()"/>' +
+    '<span>Ate:</span><input type="date" id="chartAte" value="'+hoje+'" onchange="renderChart()"/>' +
+    '<select id="chartCat" onchange="renderChart()"><option value="">Todas as categorias</option></select>' +
     '</div>' +
     '</div>' +
     '<canvas id="grafico" height="90"></canvas>' +
@@ -242,6 +274,17 @@ function renderPainel() {
     '</table></div>';
 }
 
+function toggleDebug() {
+  var b = document.getElementById('debugBox');
+  if (b) b.style.display = b.style.display === 'block' ? 'none' : 'block';
+}
+
+function log(msg) {
+  console.log(msg);
+  var b = document.getElementById('debugBox');
+  if (b) { b.innerHTML += msg + '<br>'; b.scrollTop = b.scrollHeight; }
+}
+
 async function blingGet(path) {
   var r = await fetch('/api/bling' + path);
   if (r.status === 401) { renderLogin(); throw new Error('Sessao expirada'); }
@@ -252,129 +295,126 @@ async function syncDados() {
   var tbody = document.getElementById('tbody');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando produtos...</td></tr>';
+  var debugBox = document.getElementById('debugBox');
+  if (debugBox) debugBox.innerHTML = '';
 
   try {
+    // 1. Buscar produtos
     var produtos = [];
     var pagina = 1;
     while (true) {
-      var r = await blingGet('/produtos?pagina=' + pagina + '&limite=100&situacao=A');
+      var r = await blingGet('/produtos?pagina='+pagina+'&limite=100&situacao=A');
       var items = r.data || [];
       produtos = produtos.concat(items);
       if (items.length < 100) break;
-      pagina++;
-      if (pagina > 30) break;
+      pagina++; if (pagina > 30) break;
     }
+    log('[Produtos] Total bruto: ' + produtos.length);
 
-    // Filtra: SKU começa com '0' E nome não contém "kit" (case-insensitive)
+    // Filtra: SKU começa com '0' e nome não contém 'kit'
     produtos = produtos.filter(function(p) {
       if (!p.codigo || !String(p.codigo).startsWith('0')) return false;
-      var nome = (p.nome || '').toLowerCase();
-      if (nome.includes('kit')) return false;
-      return true;
+      return !(p.nome||'').toLowerCase().includes('kit');
     });
+    log('[Produtos] Apos filtro: ' + produtos.length);
 
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
-
+    // 2. Buscar pedidos do período
+    tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas...</td></tr>';
     var hoje = new Date();
-    // FIX 2: dataFim = hoje (dia atual completo)
     var dataFim = hoje.toISOString().split('T')[0];
-    var dataIni = new Date(hoje.getTime() - config.periodo * 86400000).toISOString().split('T')[0];
+    var dataIni = new Date(hoje.getTime() - config.periodo*86400000).toISOString().split('T')[0];
 
-    // FIX 3: Janela de 7 dias correta — do início do dia 7 dias atrás até hoje
-    var corte7d = new Date(hoje);
-    corte7d.setDate(corte7d.getDate() - 7);
-    corte7d.setHours(0, 0, 0, 0);
-
-    var pedidos = [];
+    pedidosBrutos = [];
     pagina = 1;
+    var totalItensEncontrados = 0;
     while (true) {
-      // FIX 4: Incluir situação 9 (em andamento) além de 6 (atendido) para não perder vendas do dia
-      var rp = await blingGet('/pedidos/vendas?dataInicial=' + dataIni + '&dataFinal=' + dataFim + '&situacao=6&pagina=' + pagina + '&limite=100');
+      var rp = await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
       var ip = rp.data || [];
-      pedidos = pedidos.concat(ip);
+      if (pagina === 1) {
+        // Log do primeiro pedido para entender a estrutura
+        if (ip.length > 0) {
+          log('[Pedido #1 estrutura] chaves: ' + Object.keys(ip[0]).join(', '));
+          log('[Pedido #1] data="'+ip[0].data+'" dataPedido="'+ip[0].dataPedido+'"');
+          var itensEx = ip[0].itens || ip[0].item || [];
+          log('[Pedido #1] itens.length=' + itensEx.length);
+          if (itensEx.length > 0) {
+            log('[Item #1 chaves] ' + Object.keys(itensEx[0]).join(', '));
+            log('[Item #1] ' + JSON.stringify(itensEx[0]).slice(0,200));
+          }
+        } else {
+          log('[Pedidos] NENHUM pedido retornado para o periodo ' + dataIni + ' a ' + dataFim);
+          log('[Resposta raw] ' + JSON.stringify(rp).slice(0,300));
+        }
+      }
+      ip.forEach(function(p) {
+        var it = p.itens || p.item || [];
+        totalItensEncontrados += it.length;
+      });
+      pedidosBrutos = pedidosBrutos.concat(ip);
       if (ip.length < 100) break;
-      pagina++;
-      if (pagina > 20) break;
+      pagina++; if (pagina > 20) break;
     }
+    log('[Pedidos] Total: ' + pedidosBrutos.length + ' | Itens somados: ' + totalItensEncontrados);
 
+    // 3. Montar skuSet e calcular vendas no período padrão
     var skuSet = {};
     produtos.forEach(function(p) { skuSet[String(p.codigo)] = true; });
-    var vendasMap = {}, vendas7dMap = {};
 
-    pedidos.forEach(function(pedido) {
-      // FIX 5: Normalizar a data do pedido corretamente (pode vir como "2024-06-01" ou "2024-06-01T00:00:00-03:00")
-      var dataPedido;
-      try {
-        var rawData = pedido.data || pedido.dataPedido || '';
-        // Se tiver T (ISO completo), usar direto; se só data, forçar horário meio-dia para evitar fuso
-        if (rawData.includes('T')) {
-          dataPedido = new Date(rawData);
-        } else {
-          dataPedido = new Date(rawData + 'T12:00:00');
-        }
-      } catch(e) { dataPedido = new Date(0); }
+    var calc = calcularVendas(skuSet, dataIni, dataFim);
+    var vendasMap = calc.vendasMap;
+    var vendas7dMap = calc.vendas7dMap;
 
-      (pedido.itens || []).forEach(function(item) {
-        var sku = String(item.produto && item.produto.codigo ? item.produto.codigo : '');
-        if (!skuSet[sku]) return;
-        var qty = item.quantidade || 0;
-        vendasMap[sku] = (vendasMap[sku] || 0) + qty;
-        // FIX: comparar timestamps corretamente
-        if (dataPedido >= corte7d) {
-          vendas7dMap[sku] = (vendas7dMap[sku] || 0) + qty;
-        }
-      });
-    });
+    var vendidosTotal = Object.keys(vendasMap).length;
+    log('[Vendas] SKUs com venda no periodo: ' + vendidosTotal);
+    if (vendidosTotal > 0) {
+      var ex = Object.keys(vendasMap).slice(0,3);
+      ex.forEach(function(s){ log('  SKU '+s+' -> '+vendasMap[s]+' un'); });
+    }
 
+    // 4. Montar dados
     var categorias = {};
     dados = produtos.map(function(p) {
       var sku = String(p.codigo);
-      var estoque = (p.estoque && p.estoque.saldoVirtualTotal != null) ? p.estoque.saldoVirtualTotal : 0;
+      var estoque = p.estoque && p.estoque.saldoVirtualTotal != null ? p.estoque.saldoVirtualTotal : 0;
       var vendasTotal = vendasMap[sku] || 0;
       var vendas7d = vendas7dMap[sku] || 0;
       var mediaDia = config.periodo > 0 ? vendasTotal / config.periodo : 0;
       var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(mediaDia * config.minDias);
-      var diasAteMin = mediaDia > 0 ? Math.floor((estoque - estoqueMin) / mediaDia) : 999;
-      var diasAteZero = mediaDia > 0 ? Math.floor(estoque / mediaDia) : 999;
-      var nomeLC = (p.nome || '').toLowerCase();
+      var diasAteMin = mediaDia > 0 ? Math.floor((estoque-estoqueMin)/mediaDia) : 999;
+      var diasAteZero = mediaDia > 0 ? Math.floor(estoque/mediaDia) : 999;
+      var nomeLC = (p.nome||'').toLowerCase();
       var categoria =
         nomeLC.includes('espreguicadeira') || nomeLC.includes('espreguiçadeira') ? 'Espreguicadeira' :
         nomeLC.includes('mesa') ? 'Mesa de Apoio' :
-        (p.categoria && p.categoria.descricao) ? p.categoria.descricao :
-        'Outros';
+        (p.categoria && p.categoria.descricao) ? p.categoria.descricao : 'Outros';
       categorias[categoria] = true;
       var status = calcStatus(estoque, estoqueMin, diasAteZero, mediaDia);
-      return {
-        id: p.id, sku: sku, nome: p.nome || sku, categoria: categoria,
-        vendas7d: vendas7d, vendasTotal: vendasTotal, mediaDia: mediaDia,
-        estoque: estoque, estoqueMin: estoqueMin,
-        diasAteMin: diasAteMin, diasAteZero: diasAteZero,
-        status: status, customMin: !!minimoCustom[sku]
-      };
+      return { id:p.id, sku, nome:p.nome||sku, categoria, vendas7d, vendasTotal, mediaDia, estoque, estoqueMin, diasAteMin, diasAteZero, status, customMin:!!minimoCustom[sku] };
     });
 
-    var sel = document.getElementById('fCategoria');
-    if (sel) {
+    // 5. Popular selects de categoria (tabela + gráfico)
+    ['fCategoria','chartCat'].forEach(function(id) {
+      var sel = document.getElementById(id);
+      if (!sel) return;
       sel.innerHTML = '<option value="">Todas as categorias</option>';
       Object.keys(categorias).sort().forEach(function(c) {
-        sel.innerHTML += '<option value="' + c + '">' + c + '</option>';
+        sel.innerHTML += '<option value="'+c+'">'+c+'</option>';
       });
-    }
+    });
 
-    updateCards();
-    renderChart();
-    renderTable();
+    updateCards(); renderChart(); renderTable();
     var ls = document.getElementById('lastSync');
     if (ls) ls.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
 
   } catch(err) {
+    log('[ERRO] ' + err.message);
     var tb = document.getElementById('tbody');
-    if (tb) tb.innerHTML = '<tr><td colspan="11" class="empty">Erro: ' + err.message + '</td></tr>';
+    if (tb) tb.innerHTML = '<tr><td colspan="11" class="empty">Erro: '+err.message+'</td></tr>';
   }
 }
 
 function updateCards() {
-  var el = function(id) { return document.getElementById(id); };
+  var el = function(id){return document.getElementById(id);};
   if (el('cTotal')) el('cTotal').textContent = dados.length;
   if (el('cCritico')) el('cCritico').textContent = dados.filter(function(d){return d.status==='critico';}).length;
   if (el('cAtencao')) el('cAtencao').textContent = dados.filter(function(d){return d.status==='atencao';}).length;
@@ -385,36 +425,28 @@ function renderChart() {
   var canvas = document.getElementById('grafico');
   if (!canvas) return;
 
-  // FIX: Ler datas do seletor do gráfico
-  var inputDe = document.getElementById('chartDe');
-  var inputAte = document.getElementById('chartAte');
-  var dataIni = inputDe ? inputDe.value : daysAgoStr(config.periodo);
-  var dataFim = inputAte ? inputAte.value : todayStr();
+  var dataIni = (document.getElementById('chartDe')||{}).value || daysAgoStr(config.periodo);
+  var dataFim  = (document.getElementById('chartAte')||{}).value || todayStr();
+  var catFiltro = (document.getElementById('chartCat')||{}).value || '';
 
-  var dtIni = new Date(dataIni + 'T00:00:00');
-  var dtFim = new Date(dataFim + 'T23:59:59');
-  var periodoGrafico = Math.max(1, (dtFim - dtIni) / 86400000);
+  // Reprocessa vendas para o período selecionado no gráfico
+  var skuSet = {};
+  dados.forEach(function(d){ skuSet[d.sku] = true; });
+  var calc = calcularVendas(skuSet, dataIni, dataFim);
+  var vm = calc.vendasMap;
 
-  // FIX: Filtrar vendas do período selecionado usando os pedidos já carregados
-  // Recalcula vendasGrafico usando dados já processados proporcionalmente ao período
-  // Como não temos os pedidos separados por período aqui, usamos mediaDia * periodoGrafico
-  // para estimar vendas no período selecionado
-  var produtosComVenda = dados.filter(function(d) {
-    return d.mediaDia > 0;
-  });
+  // Filtra por categoria se selecionada
+  var base = catFiltro ? dados.filter(function(d){ return d.categoria === catFiltro; }) : dados;
 
-  // Ordenar por vendas estimadas no período e pegar top 20
-  var top = produtosComVenda.slice().sort(function(a, b) {
-    return b.mediaDia - a.mediaDia;
-  }).slice(0, 20);
+  // Só mostra SKUs com venda no período; se nenhum, mostra por estoque
+  var comVenda = base.filter(function(d){ return (vm[d.sku]||0) > 0; });
+  var top = comVenda.length > 0
+    ? comVenda.slice().sort(function(a,b){ return (vm[b.sku]||0)-(vm[a.sku]||0); }).slice(0,20)
+    : base.slice().sort(function(a,b){ return b.estoque-a.estoque; }).slice(0,20);
 
-  // Se não houver produtos com venda, mostra top por estoque
-  if (top.length === 0) {
-    top = dados.slice().sort(function(a,b){return b.estoque - a.estoque;}).slice(0, 20);
-  }
-
-  var cores = top.map(function(d) {
-    return d.status==='critico' ? 'rgba(220,38,38,0.75)' : d.status==='atencao' ? 'rgba(217,119,6,0.75)' : 'rgba(22,163,74,0.75)';
+  var label = comVenda.length > 0 ? 'Vendas no periodo' : 'Estoque atual (sem vendas no periodo)';
+  var cores = top.map(function(d){
+    return d.status==='critico'?'rgba(220,38,38,0.75)':d.status==='atencao'?'rgba(217,119,6,0.75)':'rgba(22,163,74,0.75)';
   });
 
   if (chartObj) chartObj.destroy();
@@ -422,90 +454,80 @@ function renderChart() {
     type: 'bar',
     data: {
       labels: top.map(function(d){ return d.sku; }),
-      datasets: [
-        {
-          label: 'Vendas no periodo',
-          data: top.map(function(d){ return +(d.mediaDia * periodoGrafico).toFixed(1); }),
-          backgroundColor: cores,
-          borderRadius: 5
-        }
-      ]
+      datasets: [{
+        label: label,
+        data: top.map(function(d){ return comVenda.length>0 ? (vm[d.sku]||0) : d.estoque; }),
+        backgroundColor: cores, borderRadius: 5
+      }]
     },
     options: {
       responsive: true,
       plugins: {
         legend: { position: 'top' },
-        tooltip: {
-          callbacks: {
-            afterLabel: function(ctx) {
-              var d = top[ctx.dataIndex];
-              return 'Media/dia: ' + d.mediaDia.toFixed(2) + '  |  Estoque: ' + d.estoque;
-            }
-          }
-        }
+        tooltip: { callbacks: { afterLabel: function(ctx) {
+          var d = top[ctx.dataIndex];
+          return 'Media/dia: '+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'  |  Estoque: '+d.estoque;
+        }}}
       },
-      scales: { y: { beginAtZero: true, title: { display: true, text: 'Unidades vendidas' } } }
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'Unidades' } } }
     }
   });
 }
 
 function renderTable() {
-  var busca = (document.getElementById('busca') ? document.getElementById('busca').value : '').toLowerCase();
-  var fStatus = document.getElementById('fStatus') ? document.getElementById('fStatus').value : '';
-  var fCategoria = document.getElementById('fCategoria') ? document.getElementById('fCategoria').value : '';
-  var chkZero = document.getElementById('chkZero') ? document.getElementById('chkZero').checked : false;
+  var busca    = ((document.getElementById('busca')||{}).value||'').toLowerCase();
+  var fStatus  = (document.getElementById('fStatus')||{}).value||'';
+  var fCat     = (document.getElementById('fCategoria')||{}).value||'';
+  var chkZero  = (document.getElementById('chkZero')||{}).checked||false;
 
   var rows = dados.filter(function(d) {
-    if (busca && d.sku.toLowerCase().indexOf(busca) < 0 && d.nome.toLowerCase().indexOf(busca) < 0) return false;
+    if (busca && d.sku.toLowerCase().indexOf(busca)<0 && d.nome.toLowerCase().indexOf(busca)<0) return false;
     if (fStatus && d.status !== fStatus) return false;
-    if (fCategoria && d.categoria !== fCategoria) return false;
-    if (chkZero && d.vendasTotal === 0 && d.estoque === 0) return false;
+    if (fCat && d.categoria !== fCat) return false;
+    if (chkZero && d.vendasTotal===0 && d.estoque===0) return false;
     return true;
   });
 
   rows.sort(function(a,b) {
-    var ord = {critico:0,atencao:1,ok:2};
-    if (ord[a.status] !== ord[b.status]) return ord[a.status]-ord[b.status];
-    return a.diasAteZero - b.diasAteZero;
+    var ord={critico:0,atencao:1,ok:2};
+    if (ord[a.status]!==ord[b.status]) return ord[a.status]-ord[b.status];
+    return a.diasAteZero-b.diasAteZero;
   });
 
   var tbody = document.getElementById('tbody');
   if (!tbody) return;
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty">Nenhum produto encontrado</td></tr>'; return; }
+  if (!rows.length) { tbody.innerHTML='<tr><td colspan="11" class="empty">Nenhum produto encontrado</td></tr>'; return; }
 
   function badge(s) {
     if (s==='critico') return '<span class="badge critico"><span class="dot"></span>Critico</span>';
     if (s==='atencao') return '<span class="badge atencao"><span class="dot"></span>Atencao</span>';
     return '<span class="badge ok"><span class="dot"></span>OK</span>';
   }
-
-  // FIX: diasBadge agora mostra data real, não só quantidade de dias
   function diasBadge(dias) {
-    if (dias >= 999 || dias < 0) return '<span style="color:#ccc">-</span>';
-    var cls = dias <= 7 ? 'dias-r' : dias <= 30 ? 'dias-a' : 'dias-g';
-    var dataEst = dataFutura(dias);
-    var label = dataEst ? formatDate(dataEst) : '-';
-    return '<span class="dias-badge ' + cls + '" title="em ' + dias + ' dias">' + label + '</span>';
+    if (dias>=999||dias<0) return '<span style="color:#ccc">-</span>';
+    var cls = dias<=7?'dias-r':dias<=30?'dias-a':'dias-g';
+    var dt = dataFutura(dias);
+    return '<span class="dias-badge '+cls+'" title="em '+dias+' dias">'+(dt?formatDate(dt):'-')+'</span>';
   }
 
-  var html = '';
+  var html='';
   rows.forEach(function(d) {
-    var minLabel = d.estoqueMin > 0 ? d.estoqueMin : '-';
+    var minLabel = d.estoqueMin>0 ? d.estoqueMin : '-';
     var customTag = d.customMin ? ' <span style="font-size:10px;color:#7c7af8">*</span>' : '';
-    var nomeEsc = d.nome.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    var nomeEsc = d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     html +=
-      '<tr>' +
-      '<td>' + badge(d.status) + '</td>' +
-      '<td><span class="tag">' + d.sku + '</span></td>' +
-      '<td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + nomeEsc + '">' + d.nome + '</td>' +
-      '<td style="color:#888;font-size:12px">' + d.categoria + '</td>' +
-      '<td style="text-align:right">' + (d.vendas7d > 0 ? '<strong>' + d.vendas7d + '</strong>' : '<span style="color:#ccc">0</span>') + '</td>' +
-      '<td style="text-align:right">' + d.vendasTotal + '</td>' +
-      '<td style="text-align:right">' + (d.mediaDia > 0 ? d.mediaDia.toFixed(2) : '-') + '</td>' +
-      '<td style="text-align:right;font-weight:600">' + d.estoque + '</td>' +
-      '<td style="text-align:right">' + minLabel + customTag + ' <button class="btn-edit" onclick="openEditMin(\'' + d.sku + '\',\'' + nomeEsc + '\')" title="Editar minimo">&#9998;</button></td>' +
-      '<td>' + diasBadge(d.diasAteMin) + '</td>' +
-      '<td>' + diasBadge(d.diasAteZero) + '</td>' +
+      '<tr>'+
+      '<td>'+badge(d.status)+'</td>'+
+      '<td><span class="tag">'+d.sku+'</span></td>'+
+      '<td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+nomeEsc+'">'+d.nome+'</td>'+
+      '<td style="color:#888;font-size:12px">'+d.categoria+'</td>'+
+      '<td style="text-align:right">'+(d.vendas7d>0?'<strong>'+d.vendas7d+'</strong>':'<span style="color:#ccc">0</span>')+'</td>'+
+      '<td style="text-align:right">'+d.vendasTotal+'</td>'+
+      '<td style="text-align:right">'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'</td>'+
+      '<td style="text-align:right;font-weight:600">'+d.estoque+'</td>'+
+      '<td style="text-align:right">'+minLabel+customTag+' <button class="btn-edit" onclick="openEditMin(\''+d.sku+'\',\''+nomeEsc+'\')" title="Editar minimo">&#9998;</button></td>'+
+      '<td>'+diasBadge(d.diasAteMin)+'</td>'+
+      '<td>'+diasBadge(d.diasAteZero)+'</td>'+
       '</tr>';
   });
   tbody.innerHTML = html;
