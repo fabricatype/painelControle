@@ -535,7 +535,14 @@ async function syncDados(){
       }
       log('[Pedidos] Situacao '+sit+': '+listaIds.length+' pedidos acumulados');
     }
-    log('[Pedidos] Lista total: '+listaIds.length+' pedidos, buscando itens...');
+    // Deduplica por ID — pedido Fulfillment que também tem NF não deve contar duas vezes
+    var idsVistos={};
+    listaIds=listaIds.filter(function(p){
+      if(idsVistos[p.id])return false;
+      idsVistos[p.id]=true;
+      return true;
+    });
+    log('[Pedidos] Lista total apos dedup: '+listaIds.length+' pedidos, buscando itens...');
     tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos ('+listaIds.length+')...</td></tr>';
 
     // 2b. Buscar cada pedido individualmente — lotes de 3 com 400ms de delay (rate limit: 3 req/s)
