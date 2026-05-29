@@ -95,6 +95,25 @@ function fetchToken(grantType, params) {
   });
 }
 
+// ── Debug ────────────────────────────────────────────────────────────────────
+app.get('/debug/produto', async (req, res) => {
+  try {
+    await ensureToken();
+    const opts = { hostname:'www.bling.com.br', path:'/Api/v3/produtos?pagina=1&limite=1&situacao=A', method:'GET', headers:{ Authorization:'Bearer '+accessToken, Accept:'application/json' } };
+    const r = https.request(opts, (response) => { let d=''; response.on('data',c=>d+=c); response.on('end',()=>res.send('<pre>'+JSON.stringify(JSON.parse(d),null,2)+'</pre>')); });
+    r.on('error', err=>res.status(500).send(err.message)); r.end();
+  } catch(e){ res.status(401).send('Nao autenticado'); }
+});
+
+app.get('/debug/estoque/:id', async (req, res) => {
+  try {
+    await ensureToken();
+    const opts = { hostname:'www.bling.com.br', path:'/Api/v3/estoques/'+req.params.id, method:'GET', headers:{ Authorization:'Bearer '+accessToken, Accept:'application/json' } };
+    const r = https.request(opts, (response) => { let d=''; response.on('data',c=>d+=c); response.on('end',()=>res.send('<pre>'+JSON.stringify(JSON.parse(d),null,2)+'</pre>')); });
+    r.on('error', err=>res.status(500).send(err.message)); r.end();
+  } catch(e){ res.status(401).send('Nao autenticado'); }
+});
+
 // ── Status Auth ──────────────────────────────────────────────────────────────
 app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!accessToken && Date.now() < tokenExpiry });
@@ -385,7 +404,8 @@ async function syncDados(){
         if(estoque <= estoqueMin || diasAteZero <= 7) status = 'critico';
         else if(diasAteMin <= config.minDias) status = 'atencao';
       }
-      return { id:p.id, sku:p.codigo, nome:p.descricao, categoria, vendas7d, vendasTotal, mediaDia, estoque, estoqueMin, diasAteMin, diasAteZero, status };
+      const nome = p.descricao || p.nome || p.name || p.description || p.codigo || '—';
+      return { id:p.id, sku:p.codigo, nome, categoria, vendas7d, vendasTotal, mediaDia, estoque, estoqueMin, diasAteMin, diasAteZero, status };
     });
 
     const sel = document.getElementById('filtroCategoria');
