@@ -423,27 +423,50 @@ async function syncDados(){
     var dataFim=hoje.toISOString().split('T')[0];
     var dataIni=new Date(hoje.getTime()-config.periodo*86400000).toISOString().split('T')[0];
 
-    pedidosBrutos=[];
+    // 2a. Buscar lista de pedidos (sem itens)
+    var listaIds=[];
+    var listaPedidos=[];
     pagina=1;
     while(true){
       var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
       var ip=rp.data||[];
-      if(pagina===1){
-        if(ip.length>0){
-          log('[Pedido #1] chaves: '+Object.keys(ip[0]).join(', '));
-          var itEx=ip[0].itens||ip[0].item||[];
-          log('[Pedido #1] itens='+itEx.length+' | data="'+ip[0].data+'"');
-          if(itEx.length>0)log('[Item #1] '+JSON.stringify(itEx[0]).slice(0,250));
-        }else{
-          log('[Pedidos] Nenhum retornado para '+dataIni+' a '+dataFim);
-          log('[Raw] '+JSON.stringify(rp).slice(0,300));
-        }
-      }
-      pedidosBrutos=pedidosBrutos.concat(ip);
+      listaPedidos=listaPedidos.concat(ip);
+      ip.forEach(function(p){if(p.id)listaIds.push({id:p.id,data:p.data});});
       if(ip.length<100)break;
       pagina++;if(pagina>20)break;
     }
-    log('[Pedidos] Total: '+pedidosBrutos.length);
+    log('[Pedidos] Lista: '+listaIds.length+' pedidos, buscando itens...');
+    tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos ('+listaIds.length+')...</td></tr>';
+
+    // 2b. Buscar cada pedido individualmente para obter os itens
+    // Processa em lotes de 10 paralelos para não sobrecarregar
+    pedidosBrutos=[];
+    var LOTE=10;
+    for(var i=0;i<listaIds.length;i+=LOTE){
+      var lote=listaIds.slice(i,i+LOTE);
+      var resultados=await Promise.all(lote.map(function(ref){
+        return blingGet('/pedidos/vendas/'+ref.id).then(function(res){
+          var pedido=res.data||res;
+          // Garante que a data da listagem seja usada se o detalhe não tiver
+          if(!pedido.data&&ref.data)pedido.data=ref.data;
+          return pedido;
+        }).catch(function(){return null;});
+      }));
+      resultados.forEach(function(p){if(p)pedidosBrutos.push(p);});
+      // Atualiza progresso
+      var pct=Math.min(i+LOTE,listaIds.length);
+      tbody.innerHTML='<tr><td colspan="12" class="loading">Buscando itens dos pedidos... '+pct+'/'+listaIds.length+'</td></tr>';
+    }
+
+    // Log da estrutura do primeiro pedido detalhado
+    if(pedidosBrutos.length>0){
+      var p0=pedidosBrutos[0];
+      log('[Pedido detalhe #1] chaves: '+Object.keys(p0).join(', '));
+      var it0=p0.itens||p0.item||[];
+      log('[Pedido detalhe #1] itens='+it0.length+' | data="'+p0.data+'"');
+      if(it0.length>0)log('[Item #1] '+JSON.stringify(it0[0]).slice(0,300));
+    }
+    log('[Pedidos] Com itens: '+pedidosBrutos.length);
 
     // 3. Calcular vendas no período padrão
     var skuSet={};
