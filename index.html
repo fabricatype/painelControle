@@ -39,7 +39,7 @@ button.primary:hover{background:#6b69e8}
 .login-screen h2{font-size:22px;font-weight:600}
 .login-screen p{color:#888;max-width:320px}
 .tag{display:inline-block;padding:2px 8px;border-radius:6px;background:#f0f0f0;font-size:11px;color:#555}
-.dias-badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px}
+.dias-badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;cursor:default}
 .dias-r{background:#fef2f2;color:#dc2626}
 .dias-a{background:#fffbeb;color:#d97706}
 .dias-g{background:#f0fdf4;color:#16a34a}
@@ -57,6 +57,7 @@ button.primary:hover{background:#6b69e8}
 .chart-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px}
 .date-range{display:flex;align-items:center;gap:6px;font-size:13px;color:#555;flex-wrap:wrap}
 .debug-box{background:#1e1e1e;color:#aaffaa;font-family:monospace;font-size:11px;padding:12px;border-radius:8px;margin:0 24px 16px;max-height:200px;overflow:auto;display:none}
+.prod-badge{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;background:#ede9fe;color:#7c3aed;margin-left:4px;font-weight:600}
 </style>
 </head>
 <body>
@@ -70,6 +71,8 @@ button.primary:hover{background:#6b69e8}
     <input type="number" id="cfgPeriodo" min="7" max="365"/>
     <label>Estoque minimo cobre quantos dias (padrao)</label>
     <input type="number" id="cfgMinDias" min="1" max="180"/>
+    <label>Dias uteis de producao (estrutura)</label>
+    <input type="number" id="cfgDiasProducao" min="1" max="30"/>
     <div class="row">
       <button onclick="closeModal('modalConfig')">Cancelar</button>
       <button class="primary" onclick="saveConfig()">Salvar</button>
@@ -91,431 +94,524 @@ button.primary:hover{background:#6b69e8}
 </div>
 
 <script>
-var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":15}');
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":15,"diasProducao":3}');
+if (!config.diasProducao) config.diasProducao = 3;
 var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
 var dados = [];
 var chartObj = null;
 var editSku = null;
-// Guarda pedidos brutos para reprocessar no gráfico por período
 var pedidosBrutos = [];
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
-function daysAgoStr(n) {
-  var d = new Date(); d.setDate(d.getDate() - n);
-  return d.toISOString().split('T')[0];
+// ─── FERIADOS NACIONAIS BRASIL (ano atual e próximo) ───────────────────────
+// Formato: "MM-DD" (fixos) + calculados por ano
+function feriadosAno(ano) {
+  // Páscoa (algoritmo de Meeus/Jones/Butcher)
+  var a=ano%19,b=Math.floor(ano/100),c=ano%100;
+  var d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25);
+  var g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
+  var i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7;
+  var m=Math.floor((a+11*h+22*l)/451);
+  var mes=Math.floor((h+l-7*m+114)/31);
+  var dia=(h+l-7*m+114)%31+1;
+  var pascoa=new Date(ano,mes-1,dia);
+  function addDias(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r;}
+  var fixos=[
+    ano+'-01-01',ano+'-04-21',ano+'-05-01',ano+'-09-07',
+    ano+'-10-12',ano+'-11-02',ano+'-11-15',ano+'-12-25'
+  ];
+  function fmt(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+  var moveis=[
+    fmt(addDias(pascoa,-48)), // Carnaval 2a
+    fmt(addDias(pascoa,-47)), // Carnaval 3a
+    fmt(addDias(pascoa,-2)),  // Sexta Santa
+    fmt(pascoa),              // Pascoa
+    fmt(addDias(pascoa,60)),  // Corpus Christi
+  ];
+  var set={};
+  fixos.concat(moveis).forEach(function(d){set[d]=true;});
+  return set;
+}
+var FERIADOS = Object.assign({}, feriadosAno(new Date().getFullYear()), feriadosAno(new Date().getFullYear()+1));
+
+function isFeriado(d) {
+  var s = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  return !!FERIADOS[s];
 }
 
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-document.addEventListener('click', function(e) {
-  if (e.target.classList.contains('modal-bg')) e.target.classList.remove('open');
-});
-
-function saveConfig() {
-  config.periodo = parseInt(document.getElementById('cfgPeriodo').value) || 30;
-  config.minDias = parseInt(document.getElementById('cfgMinDias').value) || 15;
-  localStorage.setItem('esq_cfg', JSON.stringify(config));
-  closeModal('modalConfig');
+// ─── CALENDÁRIO DE PRODUÇÃO ────────────────────────────────────────────────
+// Produção (estrutura): seg-sex, NÃO trabalha em feriados
+function isDiaProducao(d) {
+  var dow = d.getDay(); // 0=dom,6=sab
+  if (dow === 0 || dow === 6) return false;
+  if (isFeriado(d)) return false;
+  return true;
 }
 
-function openConfig() {
-  document.getElementById('cfgPeriodo').value = config.periodo;
-  document.getElementById('cfgMinDias').value = config.minDias;
-  openModal('modalConfig');
+// Trançado: seg-sab + feriados (exceto domingo)
+function isDiaTrancado(d) {
+  if (d.getDay() === 0) return false; // para no domingo
+  return true; // seg-sab, feriados OK
 }
 
-function openEditMin(sku, nome) {
-  editSku = sku;
-  document.getElementById('modalMinNome').textContent = nome;
-  document.getElementById('modalMinVal').value = minimoCustom[sku] || 0;
-  openModal('modalMin');
+// Avança N dias úteis de produção a partir de uma data
+function avancarDiasProducao(dataInicio, nDias) {
+  var d = new Date(dataInicio);
+  var count = 0;
+  while (count < nDias) {
+    d.setDate(d.getDate() + 1);
+    if (isDiaProducao(d)) count++;
+  }
+  return d;
 }
 
-function saveMin() {
-  var val = parseInt(document.getElementById('modalMinVal').value) || 0;
-  if (val > 0) minimoCustom[editSku] = val;
-  else delete minimoCustom[editSku];
-  localStorage.setItem('esq_min', JSON.stringify(minimoCustom));
-  closeModal('modalMin');
-  recalcularProduto(editSku);
-  updateCards(); renderChart(); renderTable();
+// A partir do fim da produção, avança N dias de trançado (seg-sab+feriado)
+// Como trançado começa no mesmo dia que termina a produção, retorna a data
+// em que N dias de trançado são completados (ex: 1 dia = mesmo dia se for dia de trançado)
+function avancarDiasTrancado(dataInicio, nDias) {
+  var d = new Date(dataInicio);
+  var count = 0;
+  // O dia de início conta se for dia de trançado
+  if (isDiaTrancado(d)) count++;
+  while (count < nDias) {
+    d.setDate(d.getDate() + 1);
+    if (isDiaTrancado(d)) count++;
+  }
+  return d;
 }
 
-function recalcularProduto(sku) {
-  dados = dados.map(function(d) {
-    if (d.sku !== sku) return d;
-    var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(d.mediaDia * config.minDias);
-    var diasAteMin = d.mediaDia > 0 ? Math.floor((d.estoque - estoqueMin) / d.mediaDia) : 999;
-    var diasAteZero = d.mediaDia > 0 ? Math.floor(d.estoque / d.mediaDia) : 999;
-    var status = calcStatus(d.estoque, estoqueMin, diasAteZero, d.mediaDia);
-    return Object.assign({}, d, { estoqueMin: estoqueMin, diasAteMin: diasAteMin, diasAteZero: diasAteZero, status: status, customMin: !!minimoCustom[sku] });
-  });
+// Calcula data de prontidão do pedido de reposição:
+// diasProducao dias úteis de produção + 1 dia de trançado (no mesmo dia que termina produção)
+// Retorna { dataFimProducao, dataPronta, diasCorridosTotais }
+function calcDataPronta(diasEstoqueRestam) {
+  // Hoje + diasEstoqueRestam = data em que o estoque vai acabar (ou chegar no mínimo)
+  var hoje = new Date();
+  hoje.setHours(0,0,0,0);
+
+  // Data em que o pedido precisa ficar pronto: quando o estoque atingir o mínimo
+  var dataLimite = new Date(hoje);
+  dataLimite.setDate(dataLimite.getDate() + Math.max(0, Math.floor(diasEstoqueRestam)));
+
+  // Simula: se pedir hoje, quando fica pronto?
+  var fimProducao = avancarDiasProducao(hoje, config.diasProducao);
+  // Trançado começa no mesmo dia que termina a produção (1 dia = finaliza no mesmo dia)
+  var dataPronta = avancarDiasTrancado(fimProducao, 1);
+
+  // Dias corridos da data atual até ficar pronto
+  var diasCorridos = Math.round((dataPronta - hoje) / 86400000);
+
+  return {
+    dataFimProducao: fimProducao,
+    dataPronta: dataPronta,
+    diasCorridos: diasCorridos,
+    // true se vai ficar pronto ANTES do estoque acabar
+    aPrazo: dataPronta <= dataLimite
+  };
 }
 
-function calcStatus(estoque, estoqueMin, diasAteZero, mediaDia) {
-  if (mediaDia <= 0) return 'ok';
-  if (estoque <= estoqueMin || diasAteZero <= 7) return 'critico';
-  if (diasAteZero <= 30) return 'atencao';
-  return 'ok';
+// ─── UTILITÁRIOS ──────────────────────────────────────────────────────────
+function todayStr(){return new Date().toISOString().split('T')[0];}
+function daysAgoStr(n){var d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split('T')[0];}
+function fmtDate(dateStr){
+  if(!dateStr)return'-';
+  var p=dateStr.split('-');
+  return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:dateStr;
+}
+function dateToStr(d){
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '-';
-  var p = dateStr.split('-');
-  return p.length === 3 ? p[2]+'/'+p[1]+'/'+p[0] : dateStr;
+function extrairSku(item){
+  if(!item)return'';
+  if(item.codigo)return String(item.codigo);
+  if(item.produto&&item.produto.codigo)return String(item.produto.codigo);
+  if(item.sku)return String(item.sku);
+  return'';
+}
+function extrairData(pedido){
+  var raw=pedido.data||pedido.dataPedido||pedido.dataEmissao||'';
+  if(!raw)return new Date(0);
+  try{return raw.includes('T')?new Date(raw):new Date(raw+'T12:00:00');}
+  catch(e){return new Date(0);}
 }
 
-function dataFutura(dias) {
-  if (dias >= 999 || dias < 0) return null;
-  var d = new Date(); d.setDate(d.getDate() + Math.floor(dias));
-  return d.toISOString().split('T')[0];
-}
-
-// Extrai SKU do item do pedido — tenta vários campos que a API pode retornar
-function extrairSku(item) {
-  if (!item) return '';
-  // Tenta item.codigo direto (listagem simplificada)
-  if (item.codigo) return String(item.codigo);
-  // Tenta item.produto.codigo (objeto aninhado)
-  if (item.produto && item.produto.codigo) return String(item.produto.codigo);
-  // Tenta item.sku
-  if (item.sku) return String(item.sku);
-  return '';
-}
-
-// Extrai data do pedido normalizando fuso horário
-function extrairData(pedido) {
-  var raw = pedido.data || pedido.dataPedido || pedido.dataEmissao || '';
-  if (!raw) return new Date(0);
-  try {
-    // Se vier só "YYYY-MM-DD", força meio-dia local para não virar dia anterior por fuso
-    return raw.includes('T') ? new Date(raw) : new Date(raw + 'T12:00:00');
-  } catch(e) { return new Date(0); }
-}
-
-// Calcula vendasMap e vendas7dMap a partir de pedidosBrutos filtrados por período e categoria
-function calcularVendas(skuSet, dataIni, dataFim) {
-  var dtIni = new Date(dataIni + 'T00:00:00');
-  var dtFim = new Date(dataFim + 'T23:59:59');
-  var corte7d = new Date(); corte7d.setDate(corte7d.getDate()-7); corte7d.setHours(0,0,0,0);
-  var vm = {}, v7 = {};
-  pedidosBrutos.forEach(function(pedido) {
-    var dt = extrairData(pedido);
-    if (dt < dtIni || dt > dtFim) return;
-    var itens = pedido.itens || pedido.item || [];
-    itens.forEach(function(item) {
-      var sku = extrairSku(item);
-      if (!sku || !skuSet[sku]) return;
-      var qty = parseFloat(item.quantidade || item.qtde || 0);
-      vm[sku] = (vm[sku]||0) + qty;
-      if (dt >= corte7d) v7[sku] = (v7[sku]||0) + qty;
+function calcularVendas(skuSet, dataIni, dataFim){
+  var dtIni=new Date(dataIni+'T00:00:00');
+  var dtFim=new Date(dataFim+'T23:59:59');
+  var corte7d=new Date();corte7d.setDate(corte7d.getDate()-7);corte7d.setHours(0,0,0,0);
+  var vm={},v7={};
+  pedidosBrutos.forEach(function(pedido){
+    var dt=extrairData(pedido);
+    if(dt<dtIni||dt>dtFim)return;
+    var itens=pedido.itens||pedido.item||[];
+    itens.forEach(function(item){
+      var sku=extrairSku(item);
+      if(!sku||!skuSet[sku])return;
+      var qty=parseFloat(item.quantidade||item.qtde||0);
+      vm[sku]=(vm[sku]||0)+qty;
+      if(dt>=corte7d)v7[sku]=(v7[sku]||0)+qty;
     });
   });
-  return { vendasMap: vm, vendas7dMap: v7 };
+  return{vendasMap:vm,vendas7dMap:v7};
 }
 
-async function init() {
-  try {
-    var r = await fetch('/auth/status');
-    var s = await r.json();
-    if (s.authenticated) renderPainel(); else renderLogin();
-  } catch(e) { renderLogin(); }
+// ─── MODAIS ────────────────────────────────────────────────────────────────
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.addEventListener('click',function(e){if(e.target.classList.contains('modal-bg'))e.target.classList.remove('open');});
+
+function saveConfig(){
+  config.periodo=parseInt(document.getElementById('cfgPeriodo').value)||30;
+  config.minDias=parseInt(document.getElementById('cfgMinDias').value)||15;
+  config.diasProducao=parseInt(document.getElementById('cfgDiasProducao').value)||3;
+  localStorage.setItem('esq_cfg',JSON.stringify(config));
+  closeModal('modalConfig');
+  if(dados.length>0){updateCards();renderChart();renderTable();}
+}
+function openConfig(){
+  document.getElementById('cfgPeriodo').value=config.periodo;
+  document.getElementById('cfgMinDias').value=config.minDias;
+  document.getElementById('cfgDiasProducao').value=config.diasProducao;
+  openModal('modalConfig');
+}
+function openEditMin(sku,nome){
+  editSku=sku;
+  document.getElementById('modalMinNome').textContent=nome;
+  document.getElementById('modalMinVal').value=minimoCustom[sku]||0;
+  openModal('modalMin');
+}
+function saveMin(){
+  var val=parseInt(document.getElementById('modalMinVal').value)||0;
+  if(val>0)minimoCustom[editSku]=val;else delete minimoCustom[editSku];
+  localStorage.setItem('esq_min',JSON.stringify(minimoCustom));
+  closeModal('modalMin');
+  recalcularProduto(editSku);
+  updateCards();renderChart();renderTable();
 }
 
-function renderLogin() {
-  document.getElementById('root').innerHTML =
-    '<div class="login-screen">' +
-    '<div style="font-size:56px">&#128230;</div>' +
-    '<h2>Controle de Estoque</h2>' +
-    '<p>Conecte sua conta Bling para visualizar estoque e previsao de vendas em tempo real.</p>' +
-    '<a href="/login"><button class="primary" style="padding:12px 32px;font-size:15px">Entrar com Bling</button></a>' +
+function calcStatus(estoque,estoqueMin,diasAteZero,mediaDia){
+  if(mediaDia<=0)return'ok';
+  if(estoque<=estoqueMin||diasAteZero<=7)return'critico';
+  if(diasAteZero<=30)return'atencao';
+  return'ok';
+}
+
+function recalcularProduto(sku){
+  dados=dados.map(function(d){
+    if(d.sku!==sku)return d;
+    var estoqueMin=minimoCustom[sku]?minimoCustom[sku]:Math.ceil(d.mediaDia*config.minDias);
+    var diasAteMin=d.mediaDia>0?Math.floor((d.estoque-estoqueMin)/d.mediaDia):999;
+    var diasAteZero=d.mediaDia>0?Math.floor(d.estoque/d.mediaDia):999;
+    var status=calcStatus(d.estoque,estoqueMin,diasAteZero,d.mediaDia);
+    return Object.assign({},d,{estoqueMin,diasAteMin,diasAteZero,status,customMin:!!minimoCustom[sku]});
+  });
+}
+
+// ─── INIT ──────────────────────────────────────────────────────────────────
+async function init(){
+  try{
+    var r=await fetch('/auth/status');
+    var s=await r.json();
+    if(s.authenticated)renderPainel();else renderLogin();
+  }catch(e){renderLogin();}
+}
+
+function renderLogin(){
+  document.getElementById('root').innerHTML=
+    '<div class="login-screen">'+
+    '<div style="font-size:56px">&#128230;</div>'+
+    '<h2>Controle de Estoque</h2>'+
+    '<p>Conecte sua conta Bling para visualizar estoque e previsao de vendas em tempo real.</p>'+
+    '<a href="/login"><button class="primary" style="padding:12px 32px;font-size:15px">Entrar com Bling</button></a>'+
     '</div>';
 }
 
-function renderPainel() {
-  var hoje = todayStr();
-  var inicio = daysAgoStr(config.periodo);
-  document.getElementById('root').innerHTML =
-    '<header>' +
-    '<h1>&#128230; Controle de Estoque</h1>' +
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-    '<span id="lastSync" style="font-size:12px;color:#888"></span>' +
-    '<button onclick="toggleDebug()" style="font-size:11px;padding:5px 10px;color:#aaa">Debug</button>' +
-    '<button onclick="syncDados()">&#x1F504; Atualizar</button>' +
-    '<button onclick="openConfig()">&#x2699;&#xFE0F; Config</button>' +
-    '</div></header>' +
-    '<div class="cards">' +
-    '<div class="card"><div class="num" id="cTotal">0</div><div class="lbl">Total de Produtos</div></div>' +
-    '<div class="card critico"><div class="num" id="cCritico">0</div><div class="lbl">Estoque Critico</div></div>' +
-    '<div class="card atencao"><div class="num" id="cAtencao">0</div><div class="lbl">Atencao</div></div>' +
-    '<div class="card ok"><div class="num" id="cOk">0</div><div class="lbl">Estoque OK</div></div>' +
-    '</div>' +
-    '<div id="debugBox" class="debug-box"></div>' +
-    '<div class="chart-wrap">' +
-    '<div class="chart-header">' +
-    '<h3>&#x1F4CA; Vendas por Produto</h3>' +
-    '<div class="date-range">' +
-    '<span>De:</span><input type="date" id="chartDe" value="'+inicio+'" onchange="renderChart()"/>' +
-    '<span>Ate:</span><input type="date" id="chartAte" value="'+hoje+'" onchange="renderChart()"/>' +
-    '<select id="chartCat" onchange="renderChart()"><option value="">Todas as categorias</option></select>' +
-    '</div>' +
-    '</div>' +
-    '<canvas id="grafico" height="90"></canvas>' +
-    '</div>' +
-    '<div class="top-bar">' +
-    '<input type="text" id="busca" placeholder="Buscar SKU ou produto..." oninput="renderTable()" style="width:220px"/>' +
-    '<select id="fStatus" onchange="renderTable()"><option value="">Todos os status</option><option value="critico">Critico</option><option value="atencao">Atencao</option><option value="ok">OK</option></select>' +
-    '<select id="fCategoria" onchange="renderTable()"><option value="">Todas as categorias</option></select>' +
-    '<label style="font-size:13px;color:#666;display:flex;align-items:center;gap:6px"><input type="checkbox" id="chkZero" onchange="renderTable()"/> Ocultar sem vendas e sem estoque</label>' +
-    '</div>' +
-    '<div class="table-wrap"><table>' +
-    '<thead><tr><th>Status</th><th>SKU</th><th>Produto</th><th>Categoria</th><th>Vendas 7d</th><th>Vendas Total</th><th>Media/dia</th><th>Estoque</th><th>Est. Minimo</th><th>Atinge Minimo</th><th>Zera Estoque</th></tr></thead>' +
-    '<tbody id="tbody"><tr><td colspan="11" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>' +
+function renderPainel(){
+  var hoje=todayStr();
+  var inicio=daysAgoStr(config.periodo);
+  document.getElementById('root').innerHTML=
+    '<header>'+
+    '<h1>&#128230; Controle de Estoque</h1>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+    '<span id="lastSync" style="font-size:12px;color:#888"></span>'+
+    '<button onclick="toggleDebug()" style="font-size:11px;padding:5px 10px;color:#aaa">Debug</button>'+
+    '<button onclick="syncDados()">&#x1F504; Atualizar</button>'+
+    '<button onclick="openConfig()">&#x2699;&#xFE0F; Config</button>'+
+    '</div></header>'+
+    '<div class="cards">'+
+    '<div class="card"><div class="num" id="cTotal">0</div><div class="lbl">Total de Produtos</div></div>'+
+    '<div class="card critico"><div class="num" id="cCritico">0</div><div class="lbl">Estoque Critico</div></div>'+
+    '<div class="card atencao"><div class="num" id="cAtencao">0</div><div class="lbl">Atencao</div></div>'+
+    '<div class="card ok"><div class="num" id="cOk">0</div><div class="lbl">Estoque OK</div></div>'+
+    '</div>'+
+    '<div id="debugBox" class="debug-box"></div>'+
+    '<div class="chart-wrap">'+
+    '<div class="chart-header">'+
+    '<h3>&#x1F4CA; Vendas por Produto</h3>'+
+    '<div class="date-range">'+
+    '<span>De:</span><input type="date" id="chartDe" value="'+inicio+'" onchange="renderChart()"/>'+
+    '<span>Ate:</span><input type="date" id="chartAte" value="'+hoje+'" onchange="renderChart()"/>'+
+    '<select id="chartCat" onchange="renderChart()"><option value="">Todas as categorias</option></select>'+
+    '</div>'+
+    '</div>'+
+    '<canvas id="grafico" height="90"></canvas>'+
+    '</div>'+
+    '<div class="top-bar">'+
+    '<input type="text" id="busca" placeholder="Buscar SKU ou produto..." oninput="renderTable()" style="width:220px"/>'+
+    '<select id="fStatus" onchange="renderTable()"><option value="">Todos os status</option><option value="critico">Critico</option><option value="atencao">Atencao</option><option value="ok">OK</option></select>'+
+    '<select id="fCategoria" onchange="renderTable()"><option value="">Todas as categorias</option></select>'+
+    '<label style="font-size:13px;color:#666;display:flex;align-items:center;gap:6px"><input type="checkbox" id="chkZero" onchange="renderTable()"/> Ocultar sem vendas e sem estoque</label>'+
+    '</div>'+
+    '<div class="table-wrap"><table>'+
+    '<thead><tr>'+
+    '<th>Status</th><th>SKU</th><th>Produto</th><th>Categoria</th>'+
+    '<th>Vendas 7d</th><th>Vendas Total</th><th>Media/dia</th><th>Estoque</th>'+
+    '<th>Est. Minimo</th>'+
+    '<th title="Data prevista para atingir o estoque minimo">Atinge Minimo</th>'+
+    '<th title="Data prevista para zerar o estoque">Zera Estoque</th>'+
+    '<th title="Data em que o lote ficara pronto ('+config.diasProducao+'du producao + trancado)">Pronto em</th>'+
+    '</tr></thead>'+
+    '<tbody id="tbody"><tr><td colspan="12" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>'+
     '</table></div>';
 }
 
-function toggleDebug() {
-  var b = document.getElementById('debugBox');
-  if (b) b.style.display = b.style.display === 'block' ? 'none' : 'block';
+function toggleDebug(){
+  var b=document.getElementById('debugBox');
+  if(b)b.style.display=b.style.display==='block'?'none':'block';
 }
-
-function log(msg) {
+function log(msg){
   console.log(msg);
-  var b = document.getElementById('debugBox');
-  if (b) { b.innerHTML += msg + '<br>'; b.scrollTop = b.scrollHeight; }
+  var b=document.getElementById('debugBox');
+  if(b){b.innerHTML+=msg+'<br>';b.scrollTop=b.scrollHeight;}
 }
 
-async function blingGet(path) {
-  var r = await fetch('/api/bling' + path);
-  if (r.status === 401) { renderLogin(); throw new Error('Sessao expirada'); }
+async function blingGet(path){
+  var r=await fetch('/api/bling'+path);
+  if(r.status===401){renderLogin();throw new Error('Sessao expirada');}
   return r.json();
 }
 
-async function syncDados() {
-  var tbody = document.getElementById('tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando produtos...</td></tr>';
-  var debugBox = document.getElementById('debugBox');
-  if (debugBox) debugBox.innerHTML = '';
+async function syncDados(){
+  var tbody=document.getElementById('tbody');
+  if(!tbody)return;
+  tbody.innerHTML='<tr><td colspan="12" class="loading">Carregando produtos...</td></tr>';
+  var debugBox=document.getElementById('debugBox');
+  if(debugBox)debugBox.innerHTML='';
 
-  try {
+  try{
     // 1. Buscar produtos
-    var produtos = [];
-    var pagina = 1;
-    while (true) {
-      var r = await blingGet('/produtos?pagina='+pagina+'&limite=100&situacao=A');
-      var items = r.data || [];
-      produtos = produtos.concat(items);
-      if (items.length < 100) break;
-      pagina++; if (pagina > 30) break;
+    var produtos=[];
+    var pagina=1;
+    while(true){
+      var r=await blingGet('/produtos?pagina='+pagina+'&limite=100&situacao=A');
+      var items=r.data||[];
+      produtos=produtos.concat(items);
+      if(items.length<100)break;
+      pagina++;if(pagina>30)break;
     }
-    log('[Produtos] Total bruto: ' + produtos.length);
+    log('[Produtos] Total bruto: '+produtos.length);
 
-    // Filtra: SKU começa com '0' e nome não contém 'kit'
-    produtos = produtos.filter(function(p) {
-      if (!p.codigo || !String(p.codigo).startsWith('0')) return false;
-      return !(p.nome||'').toLowerCase().includes('kit');
+    produtos=produtos.filter(function(p){
+      if(!p.codigo||!String(p.codigo).startsWith('0'))return false;
+      return!(p.nome||'').toLowerCase().includes('kit');
     });
-    log('[Produtos] Apos filtro: ' + produtos.length);
+    log('[Produtos] Apos filtro: '+produtos.length);
 
-    // 2. Buscar pedidos do período
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas...</td></tr>';
-    var hoje = new Date();
-    var dataFim = hoje.toISOString().split('T')[0];
-    var dataIni = new Date(hoje.getTime() - config.periodo*86400000).toISOString().split('T')[0];
+    // 2. Buscar pedidos
+    tbody.innerHTML='<tr><td colspan="12" class="loading">Carregando vendas...</td></tr>';
+    var hoje=new Date();
+    var dataFim=hoje.toISOString().split('T')[0];
+    var dataIni=new Date(hoje.getTime()-config.periodo*86400000).toISOString().split('T')[0];
 
-    pedidosBrutos = [];
-    pagina = 1;
-    var totalItensEncontrados = 0;
-    while (true) {
-      var rp = await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
-      var ip = rp.data || [];
-      if (pagina === 1) {
-        // Log do primeiro pedido para entender a estrutura
-        if (ip.length > 0) {
-          log('[Pedido #1 estrutura] chaves: ' + Object.keys(ip[0]).join(', '));
-          log('[Pedido #1] data="'+ip[0].data+'" dataPedido="'+ip[0].dataPedido+'"');
-          var itensEx = ip[0].itens || ip[0].item || [];
-          log('[Pedido #1] itens.length=' + itensEx.length);
-          if (itensEx.length > 0) {
-            log('[Item #1 chaves] ' + Object.keys(itensEx[0]).join(', '));
-            log('[Item #1] ' + JSON.stringify(itensEx[0]).slice(0,200));
-          }
-        } else {
-          log('[Pedidos] NENHUM pedido retornado para o periodo ' + dataIni + ' a ' + dataFim);
-          log('[Resposta raw] ' + JSON.stringify(rp).slice(0,300));
+    pedidosBrutos=[];
+    pagina=1;
+    while(true){
+      var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni+'&dataFinal='+dataFim+'&situacao=6&pagina='+pagina+'&limite=100');
+      var ip=rp.data||[];
+      if(pagina===1){
+        if(ip.length>0){
+          log('[Pedido #1] chaves: '+Object.keys(ip[0]).join(', '));
+          var itEx=ip[0].itens||ip[0].item||[];
+          log('[Pedido #1] itens='+itEx.length+' | data="'+ip[0].data+'"');
+          if(itEx.length>0)log('[Item #1] '+JSON.stringify(itEx[0]).slice(0,250));
+        }else{
+          log('[Pedidos] Nenhum retornado para '+dataIni+' a '+dataFim);
+          log('[Raw] '+JSON.stringify(rp).slice(0,300));
         }
       }
-      ip.forEach(function(p) {
-        var it = p.itens || p.item || [];
-        totalItensEncontrados += it.length;
-      });
-      pedidosBrutos = pedidosBrutos.concat(ip);
-      if (ip.length < 100) break;
-      pagina++; if (pagina > 20) break;
+      pedidosBrutos=pedidosBrutos.concat(ip);
+      if(ip.length<100)break;
+      pagina++;if(pagina>20)break;
     }
-    log('[Pedidos] Total: ' + pedidosBrutos.length + ' | Itens somados: ' + totalItensEncontrados);
+    log('[Pedidos] Total: '+pedidosBrutos.length);
 
-    // 3. Montar skuSet e calcular vendas no período padrão
-    var skuSet = {};
-    produtos.forEach(function(p) { skuSet[String(p.codigo)] = true; });
+    // 3. Calcular vendas no período padrão
+    var skuSet={};
+    produtos.forEach(function(p){skuSet[String(p.codigo)]=true;});
+    var calc=calcularVendas(skuSet,dataIni,dataFim);
+    var vendasMap=calc.vendasMap;
+    var vendas7dMap=calc.vendas7dMap;
+    log('[Vendas] SKUs com venda: '+Object.keys(vendasMap).length);
 
-    var calc = calcularVendas(skuSet, dataIni, dataFim);
-    var vendasMap = calc.vendasMap;
-    var vendas7dMap = calc.vendas7dMap;
+    // 4. Montar dados com cálculo de datas de produção
+    var categorias={};
+    dados=produtos.map(function(p){
+      var sku=String(p.codigo);
+      var estoque=p.estoque&&p.estoque.saldoVirtualTotal!=null?p.estoque.saldoVirtualTotal:0;
+      var vendasTotal=vendasMap[sku]||0;
+      var vendas7d=vendas7dMap[sku]||0;
+      var mediaDia=config.periodo>0?vendasTotal/config.periodo:0;
+      var estoqueMin=minimoCustom[sku]?minimoCustom[sku]:Math.ceil(mediaDia*config.minDias);
+      var diasAteMin=mediaDia>0?Math.floor((estoque-estoqueMin)/mediaDia):999;
+      var diasAteZero=mediaDia>0?Math.floor(estoque/mediaDia):999;
+      var nomeLC=(p.nome||'').toLowerCase();
+      var categoria=
+        nomeLC.includes('espreguicadeira')||nomeLC.includes('espreguiçadeira')?'Espreguicadeira':
+        nomeLC.includes('mesa')?'Mesa de Apoio':
+        (p.categoria&&p.categoria.descricao)?p.categoria.descricao:'Outros';
+      categorias[categoria]=true;
+      var status=calcStatus(estoque,estoqueMin,diasAteZero,mediaDia);
 
-    var vendidosTotal = Object.keys(vendasMap).length;
-    log('[Vendas] SKUs com venda no periodo: ' + vendidosTotal);
-    if (vendidosTotal > 0) {
-      var ex = Object.keys(vendasMap).slice(0,3);
-      ex.forEach(function(s){ log('  SKU '+s+' -> '+vendasMap[s]+' un'); });
-    }
+      // Calcula data de prontidão baseada em quando o estoque atinge o mínimo
+      var infoProd = mediaDia>0 ? calcDataPronta(diasAteMin) : null;
 
-    // 4. Montar dados
-    var categorias = {};
-    dados = produtos.map(function(p) {
-      var sku = String(p.codigo);
-      var estoque = p.estoque && p.estoque.saldoVirtualTotal != null ? p.estoque.saldoVirtualTotal : 0;
-      var vendasTotal = vendasMap[sku] || 0;
-      var vendas7d = vendas7dMap[sku] || 0;
-      var mediaDia = config.periodo > 0 ? vendasTotal / config.periodo : 0;
-      var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(mediaDia * config.minDias);
-      var diasAteMin = mediaDia > 0 ? Math.floor((estoque-estoqueMin)/mediaDia) : 999;
-      var diasAteZero = mediaDia > 0 ? Math.floor(estoque/mediaDia) : 999;
-      var nomeLC = (p.nome||'').toLowerCase();
-      var categoria =
-        nomeLC.includes('espreguicadeira') || nomeLC.includes('espreguiçadeira') ? 'Espreguicadeira' :
-        nomeLC.includes('mesa') ? 'Mesa de Apoio' :
-        (p.categoria && p.categoria.descricao) ? p.categoria.descricao : 'Outros';
-      categorias[categoria] = true;
-      var status = calcStatus(estoque, estoqueMin, diasAteZero, mediaDia);
-      return { id:p.id, sku, nome:p.nome||sku, categoria, vendas7d, vendasTotal, mediaDia, estoque, estoqueMin, diasAteMin, diasAteZero, status, customMin:!!minimoCustom[sku] };
+      return{id:p.id,sku,nome:p.nome||sku,categoria,vendas7d,vendasTotal,mediaDia,
+        estoque,estoqueMin,diasAteMin,diasAteZero,status,customMin:!!minimoCustom[sku],
+        infoProd};
     });
 
-    // 5. Popular selects de categoria (tabela + gráfico)
-    ['fCategoria','chartCat'].forEach(function(id) {
-      var sel = document.getElementById(id);
-      if (!sel) return;
-      sel.innerHTML = '<option value="">Todas as categorias</option>';
-      Object.keys(categorias).sort().forEach(function(c) {
-        sel.innerHTML += '<option value="'+c+'">'+c+'</option>';
+    // 5. Popular selects
+    ['fCategoria','chartCat'].forEach(function(id){
+      var sel=document.getElementById(id);
+      if(!sel)return;
+      sel.innerHTML='<option value="">Todas as categorias</option>';
+      Object.keys(categorias).sort().forEach(function(c){
+        sel.innerHTML+='<option value="'+c+'">'+c+'</option>';
       });
     });
 
-    updateCards(); renderChart(); renderTable();
-    var ls = document.getElementById('lastSync');
-    if (ls) ls.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+    updateCards();renderChart();renderTable();
+    var ls=document.getElementById('lastSync');
+    if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
 
-  } catch(err) {
-    log('[ERRO] ' + err.message);
-    var tb = document.getElementById('tbody');
-    if (tb) tb.innerHTML = '<tr><td colspan="11" class="empty">Erro: '+err.message+'</td></tr>';
+  }catch(err){
+    log('[ERRO] '+err.message);
+    var tb=document.getElementById('tbody');
+    if(tb)tb.innerHTML='<tr><td colspan="12" class="empty">Erro: '+err.message+'</td></tr>';
   }
 }
 
-function updateCards() {
-  var el = function(id){return document.getElementById(id);};
-  if (el('cTotal')) el('cTotal').textContent = dados.length;
-  if (el('cCritico')) el('cCritico').textContent = dados.filter(function(d){return d.status==='critico';}).length;
-  if (el('cAtencao')) el('cAtencao').textContent = dados.filter(function(d){return d.status==='atencao';}).length;
-  if (el('cOk')) el('cOk').textContent = dados.filter(function(d){return d.status==='ok';}).length;
+function updateCards(){
+  var el=function(id){return document.getElementById(id);};
+  if(el('cTotal'))el('cTotal').textContent=dados.length;
+  if(el('cCritico'))el('cCritico').textContent=dados.filter(function(d){return d.status==='critico';}).length;
+  if(el('cAtencao'))el('cAtencao').textContent=dados.filter(function(d){return d.status==='atencao';}).length;
+  if(el('cOk'))el('cOk').textContent=dados.filter(function(d){return d.status==='ok';}).length;
 }
 
-function renderChart() {
-  var canvas = document.getElementById('grafico');
-  if (!canvas) return;
+function renderChart(){
+  var canvas=document.getElementById('grafico');
+  if(!canvas)return;
+  var dataIni=(document.getElementById('chartDe')||{}).value||daysAgoStr(config.periodo);
+  var dataFim=(document.getElementById('chartAte')||{}).value||todayStr();
+  var catFiltro=(document.getElementById('chartCat')||{}).value||'';
 
-  var dataIni = (document.getElementById('chartDe')||{}).value || daysAgoStr(config.periodo);
-  var dataFim  = (document.getElementById('chartAte')||{}).value || todayStr();
-  var catFiltro = (document.getElementById('chartCat')||{}).value || '';
+  var skuSet={};
+  dados.forEach(function(d){skuSet[d.sku]=true;});
+  var calc=calcularVendas(skuSet,dataIni,dataFim);
+  var vm=calc.vendasMap;
 
-  // Reprocessa vendas para o período selecionado no gráfico
-  var skuSet = {};
-  dados.forEach(function(d){ skuSet[d.sku] = true; });
-  var calc = calcularVendas(skuSet, dataIni, dataFim);
-  var vm = calc.vendasMap;
+  var base=catFiltro?dados.filter(function(d){return d.categoria===catFiltro;}):dados;
+  var comVenda=base.filter(function(d){return(vm[d.sku]||0)>0;});
+  var top=comVenda.length>0
+    ?comVenda.slice().sort(function(a,b){return(vm[b.sku]||0)-(vm[a.sku]||0);}).slice(0,20)
+    :base.slice().sort(function(a,b){return b.estoque-a.estoque;}).slice(0,20);
 
-  // Filtra por categoria se selecionada
-  var base = catFiltro ? dados.filter(function(d){ return d.categoria === catFiltro; }) : dados;
-
-  // Só mostra SKUs com venda no período; se nenhum, mostra por estoque
-  var comVenda = base.filter(function(d){ return (vm[d.sku]||0) > 0; });
-  var top = comVenda.length > 0
-    ? comVenda.slice().sort(function(a,b){ return (vm[b.sku]||0)-(vm[a.sku]||0); }).slice(0,20)
-    : base.slice().sort(function(a,b){ return b.estoque-a.estoque; }).slice(0,20);
-
-  var label = comVenda.length > 0 ? 'Vendas no periodo' : 'Estoque atual (sem vendas no periodo)';
-  var cores = top.map(function(d){
+  var label=comVenda.length>0?'Vendas no periodo':'Estoque atual (sem vendas no periodo)';
+  var cores=top.map(function(d){
     return d.status==='critico'?'rgba(220,38,38,0.75)':d.status==='atencao'?'rgba(217,119,6,0.75)':'rgba(22,163,74,0.75)';
   });
 
-  if (chartObj) chartObj.destroy();
-  chartObj = new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels: top.map(function(d){ return d.sku; }),
-      datasets: [{
-        label: label,
-        data: top.map(function(d){ return comVenda.length>0 ? (vm[d.sku]||0) : d.estoque; }),
-        backgroundColor: cores, borderRadius: 5
-      }]
+  if(chartObj)chartObj.destroy();
+  chartObj=new Chart(canvas,{
+    type:'bar',
+    data:{
+      labels:top.map(function(d){return d.sku;}),
+      datasets:[{label,data:top.map(function(d){return comVenda.length>0?(vm[d.sku]||0):d.estoque;}),backgroundColor:cores,borderRadius:5}]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { position: 'top' },
-        tooltip: { callbacks: { afterLabel: function(ctx) {
-          var d = top[ctx.dataIndex];
-          return 'Media/dia: '+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'  |  Estoque: '+d.estoque;
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{position:'top'},
+        tooltip:{callbacks:{afterLabel:function(ctx){
+          var d=top[ctx.dataIndex];
+          return'Media/dia:'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'  Estoque:'+d.estoque;
         }}}
       },
-      scales: { y: { beginAtZero: true, title: { display: true, text: 'Unidades' } } }
+      scales:{y:{beginAtZero:true,title:{display:true,text:'Unidades'}}}
     }
   });
 }
 
-function renderTable() {
-  var busca    = ((document.getElementById('busca')||{}).value||'').toLowerCase();
-  var fStatus  = (document.getElementById('fStatus')||{}).value||'';
-  var fCat     = (document.getElementById('fCategoria')||{}).value||'';
-  var chkZero  = (document.getElementById('chkZero')||{}).checked||false;
+function renderTable(){
+  var busca=((document.getElementById('busca')||{}).value||'').toLowerCase();
+  var fStatus=(document.getElementById('fStatus')||{}).value||'';
+  var fCat=(document.getElementById('fCategoria')||{}).value||'';
+  var chkZero=(document.getElementById('chkZero')||{}).checked||false;
 
-  var rows = dados.filter(function(d) {
-    if (busca && d.sku.toLowerCase().indexOf(busca)<0 && d.nome.toLowerCase().indexOf(busca)<0) return false;
-    if (fStatus && d.status !== fStatus) return false;
-    if (fCat && d.categoria !== fCat) return false;
-    if (chkZero && d.vendasTotal===0 && d.estoque===0) return false;
+  var rows=dados.filter(function(d){
+    if(busca&&d.sku.toLowerCase().indexOf(busca)<0&&d.nome.toLowerCase().indexOf(busca)<0)return false;
+    if(fStatus&&d.status!==fStatus)return false;
+    if(fCat&&d.categoria!==fCat)return false;
+    if(chkZero&&d.vendasTotal===0&&d.estoque===0)return false;
     return true;
   });
 
-  rows.sort(function(a,b) {
+  rows.sort(function(a,b){
     var ord={critico:0,atencao:1,ok:2};
-    if (ord[a.status]!==ord[b.status]) return ord[a.status]-ord[b.status];
+    if(ord[a.status]!==ord[b.status])return ord[a.status]-ord[b.status];
     return a.diasAteZero-b.diasAteZero;
   });
 
-  var tbody = document.getElementById('tbody');
-  if (!tbody) return;
-  if (!rows.length) { tbody.innerHTML='<tr><td colspan="11" class="empty">Nenhum produto encontrado</td></tr>'; return; }
+  var tbody=document.getElementById('tbody');
+  if(!tbody)return;
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="12" class="empty">Nenhum produto encontrado</td></tr>';return;}
 
-  function badge(s) {
-    if (s==='critico') return '<span class="badge critico"><span class="dot"></span>Critico</span>';
-    if (s==='atencao') return '<span class="badge atencao"><span class="dot"></span>Atencao</span>';
-    return '<span class="badge ok"><span class="dot"></span>OK</span>';
+  function badge(s){
+    if(s==='critico')return'<span class="badge critico"><span class="dot"></span>Critico</span>';
+    if(s==='atencao')return'<span class="badge atencao"><span class="dot"></span>Atencao</span>';
+    return'<span class="badge ok"><span class="dot"></span>OK</span>';
   }
-  function diasBadge(dias) {
-    if (dias>=999||dias<0) return '<span style="color:#ccc">-</span>';
-    var cls = dias<=7?'dias-r':dias<=30?'dias-a':'dias-g';
-    var dt = dataFutura(dias);
-    return '<span class="dias-badge '+cls+'" title="em '+dias+' dias">'+(dt?formatDate(dt):'-')+'</span>';
+
+  // Mostra data real calculada pelos dias corridos
+  function diasBadge(diasCorridos, diasUteis){
+    if(diasCorridos===undefined||diasCorridos===null||diasCorridos>=999||diasCorridos<0)
+      return'<span style="color:#ccc">-</span>';
+    var d=new Date();d.setHours(0,0,0,0);
+    d.setDate(d.getDate()+Math.floor(diasCorridos));
+    var cls=diasCorridos<=7?'dias-r':diasCorridos<=30?'dias-a':'dias-g';
+    var tooltip='em '+diasCorridos+' dias';
+    if(diasUteis!==undefined)tooltip+=' ('+diasUteis+'du)';
+    return'<span class="dias-badge '+cls+'" title="'+tooltip+'">'+fmtDate(dateToStr(d))+'</span>';
+  }
+
+  // Badge da data de prontidão com indicador se está a prazo
+  function prodBadge(info, diasAteMin){
+    if(!info)return'<span style="color:#ccc">-</span>';
+    var dtStr=fmtDate(dateToStr(info.dataPronta));
+    var cls=info.aPrazo?'dias-g':'dias-r';
+    var aviso=info.aPrazo?'✓ a prazo':'⚠ atrasado';
+    var tooltip='Producao finaliza: '+fmtDate(dateToStr(info.dataFimProducao))+
+      ' | Pronto: '+dtStr+' ('+info.diasCorridos+'d corridos) | '+aviso;
+    return'<span class="dias-badge '+cls+'" title="'+tooltip+'">'+dtStr+'</span>';
   }
 
   var html='';
-  rows.forEach(function(d) {
-    var minLabel = d.estoqueMin>0 ? d.estoqueMin : '-';
-    var customTag = d.customMin ? ' <span style="font-size:10px;color:#7c7af8">*</span>' : '';
-    var nomeEsc = d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    html +=
+  rows.forEach(function(d){
+    var minLabel=d.estoqueMin>0?d.estoqueMin:'-';
+    var customTag=d.customMin?' <span style="font-size:10px;color:#7c7af8">*</span>':'';
+    var nomeEsc=d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    html+=
       '<tr>'+
       '<td>'+badge(d.status)+'</td>'+
       '<td><span class="tag">'+d.sku+'</span></td>'+
@@ -528,9 +624,10 @@ function renderTable() {
       '<td style="text-align:right">'+minLabel+customTag+' <button class="btn-edit" onclick="openEditMin(\''+d.sku+'\',\''+nomeEsc+'\')" title="Editar minimo">&#9998;</button></td>'+
       '<td>'+diasBadge(d.diasAteMin)+'</td>'+
       '<td>'+diasBadge(d.diasAteZero)+'</td>'+
+      '<td>'+prodBadge(d.infoProd, d.diasAteMin)+'</td>'+
       '</tr>';
   });
-  tbody.innerHTML = html;
+  tbody.innerHTML=html;
 }
 
 init();
