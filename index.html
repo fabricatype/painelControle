@@ -225,31 +225,33 @@ function dateToStr(d){
 }
 
 // Desmembra código de kit em itens individuais com quantidade
-// Padrão: KT{qtd}{SKU_espreguicadeira}_{SKU_mesa}
-// Ex: KT2011224_021224 => [{sku:'011224', qty:2}, {sku:'021224', qty:1}]
+// Padrões:
+//   KT2011224_021224 => 2x espreguicadeira 011224 + 1x mesa 021224
+//   KT2011227        => 2x espreguicadeira 011227 (sem mesa)
 function desmembrarKit(codigo, qtdPedido) {
   if (!codigo || !String(codigo).startsWith('KT')) return null;
   var s = String(codigo).slice(2); // remove 'KT'
+  var resultado = [];
+
+  // Extrai primeiro dígito como quantidade e o resto como SKU da espreguiçadeira
+  var qtdEspr = parseInt(s[0], 10);
+  if (isNaN(qtdEspr)) return null;
+
   var idx = s.indexOf('_');
-  if (idx < 0) return null;
-  var parteEspr = s.slice(0, idx); // ex: '2011224'
-  var skuMesa   = s.slice(idx + 1); // ex: '021224'
-  // Extrai qtd numérica do início (pode ser 1, 2, 3...)
-  var match = parteEspr.match(/^(\d+?)(\d{6})$/); // qtd + 6 dígitos de SKU
-  if (!match) {
-    // Tenta com SKU de tamanho variável: primeiro dígito = qtd, resto = SKU
-    var qtdEspr = parseInt(parteEspr[0], 10);
-    var skuEspr = parteEspr.slice(1);
-    if (isNaN(qtdEspr) || !skuEspr) return null;
-    return [
-      { sku: skuEspr,  qty: qtdEspr * qtdPedido },
-      { sku: skuMesa,  qty: 1      * qtdPedido }
-    ];
+  if (idx >= 0) {
+    // Com mesa: KT{qtd}{SKU_espr}_{SKU_mesa}
+    var skuEspr = s.slice(1, idx);
+    var skuMesa = s.slice(idx + 1);
+    if (!skuEspr || !skuMesa) return null;
+    resultado.push({ sku: skuEspr, qty: qtdEspr * qtdPedido });
+    resultado.push({ sku: skuMesa, qty: 1 * qtdPedido });
+  } else {
+    // Sem mesa: KT{qtd}{SKU_espr}
+    var skuEspr = s.slice(1);
+    if (!skuEspr) return null;
+    resultado.push({ sku: skuEspr, qty: qtdEspr * qtdPedido });
   }
-  return [
-    { sku: match[2], qty: parseInt(match[1], 10) * qtdPedido },
-    { sku: skuMesa,  qty: 1 * qtdPedido }
-  ];
+  return resultado;
 }
 
 function extrairSku(item){
