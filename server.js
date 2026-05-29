@@ -101,14 +101,43 @@ app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!(sess && Date.now() < sess.tokenExpiry) });
 });
 
-// Debug: lista situações de pedidos de venda
-app.get('/debug/situacoes', async (req, res) => {
+// Debug: busca múltiplos pedidos — /debug/pedidos/id1,id2,id3
+app.get('/debug/pedidos/:ids', async (req, res) => {
+  let token;
+  try { token = await ensureToken(req); }
+  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
+  const ids = req.params.ids.split(',').slice(0, 5);
+  const results = await Promise.all(ids.map(id => new Promise((resolve) => {
+    const options = {
+      hostname: 'www.bling.com.br',
+      path: '/Api/v3/pedidos/vendas/' + id.trim(),
+      method: 'GET',
+      headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+    };
+    const request = require('https').request(options, (response) => {
+      let data = '';
+      response.on('data', c => data += c);
+      response.on('end', () => {
+        try {
+          const d = JSON.parse(data).data || {};
+          resolve({ id: d.id, numero: d.numero, data: d.data, situacao: d.situacao });
+        } catch(e) { resolve({ id, error: data.slice(0,100) }); }
+      });
+    });
+    request.on('error', err => resolve({ id, error: err.message }));
+    request.end();
+  })));
+  res.json(results);
+});
+
+// Debug: busca pedido por ID para ver situação
+app.get('/debug/pedido/:id', async (req, res) => {
   let token;
   try { token = await ensureToken(req); }
   catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
   const options = {
     hostname: 'www.bling.com.br',
-    path: '/Api/v3/situacoes/modulos/2', // módulo 2 = pedidos de venda
+    path: '/Api/v3/pedidos/vendas/' + req.params.id,
     method: 'GET',
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
   };
@@ -116,8 +145,19 @@ app.get('/debug/situacoes', async (req, res) => {
     let data = '';
     response.on('data', c => data += c);
     response.on('end', () => {
-      try { res.json(JSON.parse(data)); }
-      catch(e) { res.json({ raw: data }); }
+      try {
+        const json = JSON.parse(data);
+        // Retorna só o relevante
+        const d = json.data || json;
+        res.json({
+          id: d.id,
+          numero: d.numero,
+          data: d.data,
+          situacao: d.situacao,
+          loja: d.loja,
+          itens: (d.itens||[]).map(function(i){ return {codigo:i.codigo, descricao:i.descricao, quantidade:i.quantidade}; })
+        });
+      } catch(e) { res.json({ raw: data }); }
     });
   });
   request.on('error', err => res.status(500).json({ error: err.message }));
