@@ -60,11 +60,11 @@ function fetchToken(grantType, params) {
   return new Promise((resolve, reject) => {
     const body = querystring.stringify({
       grant_type: grantType,
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
       redirect_uri: REDIRECT_URI,
       ...params
     });
+
+    const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
 
     const options = {
       hostname: 'www.bling.com.br',
@@ -72,7 +72,9 @@ function fetchToken(grantType, params) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(body)
+        'Content-Length': Buffer.byteLength(body),
+        'Authorization': `Basic ${credentials}`,
+        'Accept': 'application/json'
       }
     };
 
@@ -82,9 +84,9 @@ function fetchToken(grantType, params) {
       response.on('end', () => {
         try {
           const json = JSON.parse(data);
-          if (json.error) reject(new Error(json.error_description || json.error));
+          if (json.error) reject(new Error(JSON.stringify(json)));
           else resolve(json);
-        } catch { reject(new Error('Resposta inválida')); }
+        } catch { reject(new Error('Resposta inválida: ' + data)); }
       });
     });
     req.on('error', reject);
