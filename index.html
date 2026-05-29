@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Controle de Estoque</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;color:#1a1a1a;font-size:14px}
+header{background:#fff;border-bottom:1px solid #e5e5e5;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;flex-wrap:wrap;gap:10px}
+header h1{font-size:16px;font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 24px}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:14px 16px}
+.card .num{font-size:28px;font-weight:600;margin-bottom:2px}
+.card .lbl{font-size:12px;color:#888}
+.card.critico .num{color:#dc2626}.card.atencao .num{color:#d97706}.card.ok .num{color:#16a34a}
+.chart-wrap{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:20px;margin:0 24px 16px}
+.chart-wrap h3{font-size:14px;font-weight:600;margin-bottom:16px;color:#444}
+.top-bar{padding:0 24px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.table-wrap{padding:0 24px 32px;overflow-x:auto}
+table{width:100%;background:#fff;border-radius:10px;border:1px solid #e5e5e5;border-collapse:separate;border-spacing:0;overflow:hidden}
+th{background:#fafafa;padding:10px 14px;text-align:left;font-size:12px;font-weight:500;color:#666;border-bottom:1px solid #e5e5e5;white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafafa}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:500}
+.badge.critico{background:#fef2f2;color:#dc2626}
+.badge.atencao{background:#fffbeb;color:#d97706}
+.badge.ok{background:#f0fdf4;color:#16a34a}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+select,input[type=text],input[type=number]{padding:7px 12px;border:1px solid #e5e5e5;border-radius:8px;font-size:13px;background:#fff;outline:none}
+select:focus,input:focus{border-color:#7c7af8}
+button{padding:8px 16px;border-radius:8px;border:1px solid #e5e5e5;background:#fff;font-size:13px;cursor:pointer;font-weight:500;transition:.15s}
+button:hover{background:#f5f5f5}
+button.primary{background:#7c7af8;color:#fff;border-color:#7c7af8}
+button.primary:hover{background:#6b69e8}
+.login-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:16px;text-align:center}
+.login-screen h2{font-size:22px;font-weight:600}
+.login-screen p{color:#888;max-width:320px}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;background:#f0f0f0;font-size:11px;color:#555}
+.dias-badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px}
+.dias-r{background:#fef2f2;color:#dc2626}
+.dias-a{background:#fffbeb;color:#d97706}
+.dias-g{background:#f0fdf4;color:#16a34a}
+.loading{text-align:center;padding:48px;color:#888}
+.empty{text-align:center;padding:48px;color:#aaa;font-size:13px}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:14px;padding:24px;width:380px;max-width:90vw}
+.modal h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.modal label{display:block;font-size:12px;color:#666;margin-bottom:4px;margin-top:12px}
+.modal input{width:100%;padding:9px 12px;border:1px solid #e5e5e5;border-radius:8px;font-size:13px}
+.modal .row{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
+.btn-edit{background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:4px;font-size:12px;color:#7c7af8;font-weight:600}
+.btn-edit:hover{background:#EEEDFE}
+</style>
+</head>
+<body>
+
+<div id="root"><div class="loading" style="padding:100px;font-size:16px">Verificando autenticacao...</div></div>
+
+<div class="modal-bg" id="modalConfig">
+  <div class="modal">
+    <h2>Configuracoes</h2>
+    <label>Periodo para media de vendas (dias)</label>
+    <input type="number" id="cfgPeriodo" min="7" max="365"/>
+    <label>Estoque minimo cobre quantos dias (padrao)</label>
+    <input type="number" id="cfgMinDias" min="1" max="180"/>
+    <div class="row">
+      <button onclick="closeModal('modalConfig')">Cancelar</button>
+      <button class="primary" onclick="saveConfig()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalMin">
+  <div class="modal">
+    <h2>Editar Estoque Minimo</h2>
+    <p id="modalMinNome" style="font-size:13px;color:#666;margin-bottom:8px"></p>
+    <label>Quantidade minima (0 = calcular automaticamente)</label>
+    <input type="number" id="modalMinVal" min="0"/>
+    <div class="row">
+      <button onclick="closeModal('modalMin')">Cancelar</button>
+      <button class="primary" onclick="saveMin()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":15}');
+var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
+var dados = [];
+var chartObj = null;
+var editSku = null;
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-bg')) e.target.classList.remove('open');
+});
+
+function saveConfig() {
+  config.periodo = parseInt(document.getElementById('cfgPeriodo').value) || 30;
+  config.minDias = parseInt(document.getElementById('cfgMinDias').value) || 15;
+  localStorage.setItem('esq_cfg', JSON.stringify(config));
+  closeModal('modalConfig');
+}
+
+function openConfig() {
+  document.getElementById('cfgPeriodo').value = config.periodo;
+  document.getElementById('cfgMinDias').value = config.minDias;
+  openModal('modalConfig');
+}
+
+function openEditMin(sku, nome) {
+  editSku = sku;
+  document.getElementById('modalMinNome').textContent = nome;
+  document.getElementById('modalMinVal').value = minimoCustom[sku] || 0;
+  openModal('modalMin');
+}
+
+function saveMin() {
+  var val = parseInt(document.getElementById('modalMinVal').value) || 0;
+  if (val > 0) minimoCustom[editSku] = val;
+  else delete minimoCustom[editSku];
+  localStorage.setItem('esq_min', JSON.stringify(minimoCustom));
+  closeModal('modalMin');
+  recalcularProduto(editSku);
+  updateCards();
+  renderChart();
+  renderTable();
+}
+
+function recalcularProduto(sku) {
+  dados = dados.map(function(d) {
+    if (d.sku !== sku) return d;
+    var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(d.mediaDia * config.minDias);
+    var diasAteMin = d.mediaDia > 0 ? Math.floor((d.estoque - estoqueMin) / d.mediaDia) : 999;
+    var diasAteZero = d.mediaDia > 0 ? Math.floor(d.estoque / d.mediaDia) : 999;
+    var status = calcStatus(d.estoque, estoqueMin, diasAteZero, d.mediaDia);
+    return Object.assign({}, d, { estoqueMin: estoqueMin, diasAteMin: diasAteMin, diasAteZero: diasAteZero, status: status, customMin: !!minimoCustom[sku] });
+  });
+}
+
+function calcStatus(estoque, estoqueMin, diasAteZero, mediaDia) {
+  if (mediaDia <= 0) return 'ok';
+  if (estoque <= estoqueMin || diasAteZero <= 7) return 'critico';
+  if (diasAteZero <= 30) return 'atencao';
+  return 'ok';
+}
+
+async function init() {
+  try {
+    var r = await fetch('/auth/status');
+    var s = await r.json();
+    if (s.authenticated) {
+      renderPainel();
+    } else {
+      renderLogin();
+    }
+  } catch(e) {
+    renderLogin();
+  }
+}
+
+function renderLogin() {
+  document.getElementById('root').innerHTML =
+    '<div class="login-screen">' +
+    '<div style="font-size:56px">&#128230;</div>' +
+    '<h2>Controle de Estoque</h2>' +
+    '<p>Conecte sua conta Bling para visualizar estoque e previsao de vendas em tempo real.</p>' +
+    '<a href="/login"><button class="primary" style="padding:12px 32px;font-size:15px">Entrar com Bling</button></a>' +
+    '</div>';
+}
+
+function renderPainel() {
+  document.getElementById('root').innerHTML =
+    '<header>' +
+    '<h1>&#128230; Controle de Estoque</h1>' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+    '<span id="lastSync" style="font-size:12px;color:#888"></span>' +
+    '<button onclick="syncDados()">&#x1F504; Atualizar</button>' +
+    '<button onclick="openConfig()">&#x2699;&#xFE0F; Config</button>' +
+    '</div></header>' +
+    '<div class="cards">' +
+    '<div class="card"><div class="num" id="cTotal">0</div><div class="lbl">Total de Produtos</div></div>' +
+    '<div class="card critico"><div class="num" id="cCritico">0</div><div class="lbl">Estoque Critico</div></div>' +
+    '<div class="card atencao"><div class="num" id="cAtencao">0</div><div class="lbl">Atencao</div></div>' +
+    '<div class="card ok"><div class="num" id="cOk">0</div><div class="lbl">Estoque OK</div></div>' +
+    '</div>' +
+    '<div class="chart-wrap"><h3>&#x1F4CA; Estoque por Produto (Top 20)</h3><canvas id="grafico" height="90"></canvas></div>' +
+    '<div class="top-bar">' +
+    '<input type="text" id="busca" placeholder="Buscar SKU ou produto..." oninput="renderTable()" style="width:220px"/>' +
+    '<select id="fStatus" onchange="renderTable()"><option value="">Todos os status</option><option value="critico">Critico</option><option value="atencao">Atencao</option><option value="ok">OK</option></select>' +
+    '<select id="fCategoria" onchange="renderTable()"><option value="">Todas as categorias</option></select>' +
+    '<label style="font-size:13px;color:#666;display:flex;align-items:center;gap:6px"><input type="checkbox" id="chkZero" onchange="renderTable()"/> Ocultar sem vendas e sem estoque</label>' +
+    '</div>' +
+    '<div class="table-wrap"><table>' +
+    '<thead><tr><th>Status</th><th>SKU</th><th>Produto</th><th>Categoria</th><th>Vendas 7d</th><th>Vendas Total</th><th>Media/dia</th><th>Estoque</th><th>Est. Minimo</th><th>Atinge Minimo</th><th>Zera Estoque</th></tr></thead>' +
+    '<tbody id="tbody"><tr><td colspan="11" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>' +
+    '</table></div>';
+}
+
+async function blingGet(path) {
+  var r = await fetch('/api/bling' + path);
+  if (r.status === 401) { renderLogin(); throw new Error('Sessao expirada'); }
+  return r.json();
+}
+
+async function syncDados() {
+  var tbody = document.getElementById('tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando produtos...</td></tr>';
+
+  try {
+    var produtos = [];
+    var pagina = 1;
+    while (true) {
+      var r = await blingGet('/produtos?pagina=' + pagina + '&limite=100&situacao=A');
+      var items = r.data || [];
+      produtos = produtos.concat(items);
+      if (items.length < 100) break;
+      pagina++;
+      if (pagina > 30) break;
+    }
+
+    // Filtra: SKU comeca com '0' E nao e kit
+    produtos = produtos.filter(function(p) {
+      return p.codigo && String(p.codigo).startsWith('0') && p.formato !== 'K';
+    });
+
+    tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
+
+    var hoje = new Date();
+    var dataFim = hoje.toISOString().split('T')[0];
+    var dataIni = new Date(hoje.getTime() - config.periodo * 86400000).toISOString().split('T')[0];
+    var corte7d = new Date(hoje.getTime() - 7 * 86400000);
+
+    var pedidos = [];
+    pagina = 1;
+    while (true) {
+      var rp = await blingGet('/pedidos/vendas?dataInicial=' + dataIni + '&dataFinal=' + dataFim + '&situacao=6&pagina=' + pagina + '&limite=100');
+      var ip = rp.data || [];
+      pedidos = pedidos.concat(ip);
+      if (ip.length < 100) break;
+      pagina++;
+      if (pagina > 20) break;
+    }
+
+    var skuSet = {};
+    produtos.forEach(function(p) { skuSet[String(p.codigo)] = true; });
+    var vendasMap = {}, vendas7dMap = {};
+    pedidos.forEach(function(pedido) {
+      (pedido.itens || []).forEach(function(item) {
+        var sku = String(item.produto && item.produto.codigo ? item.produto.codigo : '');
+        if (!skuSet[sku]) return;
+        vendasMap[sku] = (vendasMap[sku] || 0) + (item.quantidade || 0);
+        if (new Date(pedido.data) >= corte7d)
+          vendas7dMap[sku] = (vendas7dMap[sku] || 0) + (item.quantidade || 0);
+      });
+    });
+
+    var categorias = {};
+    dados = produtos.map(function(p) {
+      var sku = String(p.codigo);
+      var estoque = (p.estoque && p.estoque.saldoVirtualTotal) ? p.estoque.saldoVirtualTotal : 0;
+      var vendasTotal = vendasMap[sku] || 0;
+      var vendas7d = vendas7dMap[sku] || 0;
+      var mediaDia = vendasTotal / config.periodo;
+      var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(mediaDia * config.minDias);
+      var diasAteMin = mediaDia > 0 ? Math.floor((estoque - estoqueMin) / mediaDia) : 999;
+      var diasAteZero = mediaDia > 0 ? Math.floor(estoque / mediaDia) : 999;
+      var categoria = (p.categoria && p.categoria.descricao) ? p.categoria.descricao : 'Sem categoria';
+      categorias[categoria] = true;
+      var status = calcStatus(estoque, estoqueMin, diasAteZero, mediaDia);
+      return { id: p.id, sku: sku, nome: p.nome || sku, categoria: categoria, vendas7d: vendas7d, vendasTotal: vendasTotal, mediaDia: mediaDia, estoque: estoque, estoqueMin: estoqueMin, diasAteMin: diasAteMin, diasAteZero: diasAteZero, status: status, customMin: !!minimoCustom[sku] };
+    });
+
+    var sel = document.getElementById('fCategoria');
+    if (sel) {
+      sel.innerHTML = '<option value="">Todas as categorias</option>';
+      Object.keys(categorias).sort().forEach(function(c) {
+        sel.innerHTML += '<option value="' + c + '">' + c + '</option>';
+      });
+    }
+
+    updateCards();
+    renderChart();
+    renderTable();
+    var ls = document.getElementById('lastSync');
+    if (ls) ls.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+
+  } catch(err) {
+    var tb = document.getElementById('tbody');
+    if (tb) tb.innerHTML = '<tr><td colspan="11" class="empty">Erro: ' + err.message + '</td></tr>';
+  }
+}
+
+function updateCards() {
+  var el = function(id) { return document.getElementById(id); };
+  if (el('cTotal')) el('cTotal').textContent = dados.length;
+  if (el('cCritico')) el('cCritico').textContent = dados.filter(function(d){return d.status==='critico';}).length;
+  if (el('cAtencao')) el('cAtencao').textContent = dados.filter(function(d){return d.status==='atencao';}).length;
+  if (el('cOk')) el('cOk').textContent = dados.filter(function(d){return d.status==='ok';}).length;
+}
+
+function renderChart() {
+  var canvas = document.getElementById('grafico');
+  if (!canvas) return;
+  var top = dados.slice().sort(function(a,b){return b.estoque-a.estoque;}).slice(0,20);
+  var cores = top.map(function(d) {
+    return d.status==='critico' ? 'rgba(220,38,38,0.75)' : d.status==='atencao' ? 'rgba(217,119,6,0.75)' : 'rgba(22,163,74,0.75)';
+  });
+  if (chartObj) chartObj.destroy();
+  chartObj = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: top.map(function(d){return d.sku;}),
+      datasets: [
+        { label: 'Estoque atual', data: top.map(function(d){return d.estoque;}), backgroundColor: cores, borderRadius: 5 },
+        { label: 'Est. Minimo', data: top.map(function(d){return d.estoqueMin > 0 ? d.estoqueMin : null;}), type: 'line', borderColor: 'rgba(124,122,248,0.7)', borderWidth: 2, borderDash: [5,5], pointRadius: 0, fill: false }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+}
+
+function renderTable() {
+  var busca = (document.getElementById('busca') ? document.getElementById('busca').value : '').toLowerCase();
+  var fStatus = document.getElementById('fStatus') ? document.getElementById('fStatus').value : '';
+  var fCategoria = document.getElementById('fCategoria') ? document.getElementById('fCategoria').value : '';
+  var chkZero = document.getElementById('chkZero') ? document.getElementById('chkZero').checked : false;
+
+  var rows = dados.filter(function(d) {
+    if (busca && d.sku.toLowerCase().indexOf(busca) < 0 && d.nome.toLowerCase().indexOf(busca) < 0) return false;
+    if (fStatus && d.status !== fStatus) return false;
+    if (fCategoria && d.categoria !== fCategoria) return false;
+    if (chkZero && d.vendasTotal === 0 && d.estoque === 0) return false;
+    return true;
+  });
+
+  rows.sort(function(a,b) {
+    var ord = {critico:0,atencao:1,ok:2};
+    if (ord[a.status] !== ord[b.status]) return ord[a.status]-ord[b.status];
+    return a.diasAteZero - b.diasAteZero;
+  });
+
+  var tbody = document.getElementById('tbody');
+  if (!tbody) return;
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty">Nenhum produto encontrado</td></tr>'; return; }
+
+  function badge(s) {
+    if (s==='critico') return '<span class="badge critico"><span class="dot"></span>Critico</span>';
+    if (s==='atencao') return '<span class="badge atencao"><span class="dot"></span>Atencao</span>';
+    return '<span class="badge ok"><span class="dot"></span>OK</span>';
+  }
+  function diasBadge(dias) {
+    if (dias >= 999) return '<span style="color:#ccc">-</span>';
+    var cls = dias <= 7 ? 'dias-r' : dias <= 30 ? 'dias-a' : 'dias-g';
+    return '<span class="dias-badge ' + cls + '">' + dias + 'd</span>';
+  }
+
+  var html = '';
+  rows.forEach(function(d) {
+    var minLabel = d.estoqueMin > 0 ? d.estoqueMin : '-';
+    var customTag = d.customMin ? ' <span style="font-size:10px;color:#7c7af8">*</span>' : '';
+    var nomeEsc = d.nome.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    html +=
+      '<tr>' +
+      '<td>' + badge(d.status) + '</td>' +
+      '<td><span class="tag">' + d.sku + '</span></td>' +
+      '<td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + nomeEsc + '">' + d.nome + '</td>' +
+      '<td style="color:#888;font-size:12px">' + d.categoria + '</td>' +
+      '<td style="text-align:right">' + d.vendas7d + '</td>' +
+      '<td style="text-align:right">' + d.vendasTotal + '</td>' +
+      '<td style="text-align:right">' + (d.mediaDia > 0 ? d.mediaDia.toFixed(1) : '-') + '</td>' +
+      '<td style="text-align:right;font-weight:600">' + d.estoque + '</td>' +
+      '<td style="text-align:right">' + minLabel + customTag + ' <button class="btn-edit" onclick="openEditMin(\'' + d.sku + '\',\'' + nomeEsc + '\')" title="Editar minimo">&#9998;</button></td>' +
+      '<td>' + diasBadge(d.diasAteMin) + '</td>' +
+      '<td>' + diasBadge(d.diasAteZero) + '</td>' +
+      '</tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+init();
+</script>
+</body>
+</html>
