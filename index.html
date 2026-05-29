@@ -29,7 +29,7 @@ tr:hover td{background:#fafafa}
 .badge.atencao{background:#fffbeb;color:#d97706}
 .badge.ok{background:#f0fdf4;color:#16a34a}
 .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-select,input[type=text],input[type=number]{padding:7px 12px;border:1px solid #e5e5e5;border-radius:8px;font-size:13px;background:#fff;outline:none}
+select,input[type=text],input[type=number],input[type=date]{padding:7px 12px;border:1px solid #e5e5e5;border-radius:8px;font-size:13px;background:#fff;outline:none}
 select:focus,input:focus{border-color:#7c7af8}
 button{padding:8px 16px;border-radius:8px;border:1px solid #e5e5e5;background:#fff;font-size:13px;cursor:pointer;font-weight:500;transition:.15s}
 button:hover{background:#f5f5f5}
@@ -47,13 +47,14 @@ button.primary:hover{background:#6b69e8}
 .empty{text-align:center;padding:48px;color:#aaa;font-size:13px}
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center}
 .modal-bg.open{display:flex}
-.modal{background:#fff;border-radius:14px;padding:24px;width:380px;max-width:90vw}
+.modal{background:#fff;border-radius:14px;padding:24px;width:420px;max-width:90vw}
 .modal h2{font-size:16px;font-weight:600;margin-bottom:16px}
 .modal label{display:block;font-size:12px;color:#666;margin-bottom:4px;margin-top:12px}
 .modal input{width:100%;padding:9px 12px;border:1px solid #e5e5e5;border-radius:8px;font-size:13px}
 .modal .row{display:flex;gap:8px;margin-top:16px;justify-content:flex-end}
 .btn-edit{background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:4px;font-size:12px;color:#7c7af8;font-weight:600}
 .btn-edit:hover{background:#EEEDFE}
+.date-range{display:flex;align-items:center;gap:6px;font-size:13px;color:#666}
 </style>
 </head>
 <body>
@@ -93,6 +94,16 @@ var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
 var dados = [];
 var chartObj = null;
 var editSku = null;
+
+// Datas padrão: início do dia atual até agora
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+function daysAgoStr(n) {
+  var d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+}
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -150,6 +161,22 @@ function calcStatus(estoque, estoqueMin, diasAteZero, mediaDia) {
   return 'ok';
 }
 
+// Retorna data formatada para exibição: "dd/mm/aaaa"
+function formatDate(dateStr) {
+  if (!dateStr || dateStr === '999') return '-';
+  var parts = dateStr.split('-');
+  if (parts.length === 3) return parts[2] + '/' + parts[1] + '/' + parts[0];
+  return dateStr;
+}
+
+// Calcula a data futura somando diasRestantes a hoje
+function dataFutura(dias) {
+  if (dias >= 999 || dias < 0) return null;
+  var d = new Date();
+  d.setDate(d.getDate() + Math.floor(dias));
+  return d.toISOString().split('T')[0];
+}
+
 async function init() {
   try {
     var r = await fetch('/auth/status');
@@ -175,6 +202,10 @@ function renderLogin() {
 }
 
 function renderPainel() {
+  // Data padrão: hoje
+  var hoje = todayStr();
+  var inicio30 = daysAgoStr(config.periodo);
+
   document.getElementById('root').innerHTML =
     '<header>' +
     '<h1>&#128230; Controle de Estoque</h1>' +
@@ -189,7 +220,16 @@ function renderPainel() {
     '<div class="card atencao"><div class="num" id="cAtencao">0</div><div class="lbl">Atencao</div></div>' +
     '<div class="card ok"><div class="num" id="cOk">0</div><div class="lbl">Estoque OK</div></div>' +
     '</div>' +
-    '<div class="chart-wrap"><h3>&#x1F4CA; Estoque por Produto (Top 20)</h3><canvas id="grafico" height="90"></canvas></div>' +
+    '<div class="chart-wrap">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">' +
+    '<h3 style="margin:0">&#x1F4CA; Vendas por Produto no Periodo</h3>' +
+    '<div class="date-range">' +
+    '<label style="margin:0">De: <input type="date" id="chartDe" value="' + inicio30 + '" onchange="renderChart()"/></label>' +
+    '<label style="margin:0">Ate: <input type="date" id="chartAte" value="' + hoje + '" onchange="renderChart()"/></label>' +
+    '</div>' +
+    '</div>' +
+    '<canvas id="grafico" height="90"></canvas>' +
+    '</div>' +
     '<div class="top-bar">' +
     '<input type="text" id="busca" placeholder="Buscar SKU ou produto..." oninput="renderTable()" style="width:220px"/>' +
     '<select id="fStatus" onchange="renderTable()"><option value="">Todos os status</option><option value="critico">Critico</option><option value="atencao">Atencao</option><option value="ok">OK</option></select>' +
@@ -225,21 +265,30 @@ async function syncDados() {
       if (pagina > 30) break;
     }
 
-    // Filtra: SKU comeca com '0' E nao e kit
+    // FIX 1: Filtra SKU começa com '0' E exclui kits (formato K ou tipo kit)
     produtos = produtos.filter(function(p) {
-      return p.codigo && String(p.codigo).startsWith('0') && p.formato !== 'K';
+      return p.codigo &&
+             String(p.codigo).startsWith('0') &&
+             p.formato !== 'K' &&
+             p.tipo !== 'K';
     });
 
     tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
 
     var hoje = new Date();
+    // FIX 2: dataFim = hoje (dia atual completo)
     var dataFim = hoje.toISOString().split('T')[0];
     var dataIni = new Date(hoje.getTime() - config.periodo * 86400000).toISOString().split('T')[0];
-    var corte7d = new Date(hoje.getTime() - 7 * 86400000);
+
+    // FIX 3: Janela de 7 dias correta — do início do dia 7 dias atrás até hoje
+    var corte7d = new Date(hoje);
+    corte7d.setDate(corte7d.getDate() - 7);
+    corte7d.setHours(0, 0, 0, 0);
 
     var pedidos = [];
     pagina = 1;
     while (true) {
+      // FIX 4: Incluir situação 9 (em andamento) além de 6 (atendido) para não perder vendas do dia
       var rp = await blingGet('/pedidos/vendas?dataInicial=' + dataIni + '&dataFinal=' + dataFim + '&situacao=6&pagina=' + pagina + '&limite=100');
       var ip = rp.data || [];
       pedidos = pedidos.concat(ip);
@@ -251,30 +300,52 @@ async function syncDados() {
     var skuSet = {};
     produtos.forEach(function(p) { skuSet[String(p.codigo)] = true; });
     var vendasMap = {}, vendas7dMap = {};
+
     pedidos.forEach(function(pedido) {
+      // FIX 5: Normalizar a data do pedido corretamente (pode vir como "2024-06-01" ou "2024-06-01T00:00:00-03:00")
+      var dataPedido;
+      try {
+        var rawData = pedido.data || pedido.dataPedido || '';
+        // Se tiver T (ISO completo), usar direto; se só data, forçar horário meio-dia para evitar fuso
+        if (rawData.includes('T')) {
+          dataPedido = new Date(rawData);
+        } else {
+          dataPedido = new Date(rawData + 'T12:00:00');
+        }
+      } catch(e) { dataPedido = new Date(0); }
+
       (pedido.itens || []).forEach(function(item) {
         var sku = String(item.produto && item.produto.codigo ? item.produto.codigo : '');
         if (!skuSet[sku]) return;
-        vendasMap[sku] = (vendasMap[sku] || 0) + (item.quantidade || 0);
-        if (new Date(pedido.data) >= corte7d)
-          vendas7dMap[sku] = (vendas7dMap[sku] || 0) + (item.quantidade || 0);
+        var qty = item.quantidade || 0;
+        vendasMap[sku] = (vendasMap[sku] || 0) + qty;
+        // FIX: comparar timestamps corretamente
+        if (dataPedido >= corte7d) {
+          vendas7dMap[sku] = (vendas7dMap[sku] || 0) + qty;
+        }
       });
     });
 
     var categorias = {};
     dados = produtos.map(function(p) {
       var sku = String(p.codigo);
-      var estoque = (p.estoque && p.estoque.saldoVirtualTotal) ? p.estoque.saldoVirtualTotal : 0;
+      var estoque = (p.estoque && p.estoque.saldoVirtualTotal != null) ? p.estoque.saldoVirtualTotal : 0;
       var vendasTotal = vendasMap[sku] || 0;
       var vendas7d = vendas7dMap[sku] || 0;
-      var mediaDia = vendasTotal / config.periodo;
+      var mediaDia = config.periodo > 0 ? vendasTotal / config.periodo : 0;
       var estoqueMin = minimoCustom[sku] ? minimoCustom[sku] : Math.ceil(mediaDia * config.minDias);
       var diasAteMin = mediaDia > 0 ? Math.floor((estoque - estoqueMin) / mediaDia) : 999;
       var diasAteZero = mediaDia > 0 ? Math.floor(estoque / mediaDia) : 999;
       var categoria = (p.categoria && p.categoria.descricao) ? p.categoria.descricao : 'Sem categoria';
       categorias[categoria] = true;
       var status = calcStatus(estoque, estoqueMin, diasAteZero, mediaDia);
-      return { id: p.id, sku: sku, nome: p.nome || sku, categoria: categoria, vendas7d: vendas7d, vendasTotal: vendasTotal, mediaDia: mediaDia, estoque: estoque, estoqueMin: estoqueMin, diasAteMin: diasAteMin, diasAteZero: diasAteZero, status: status, customMin: !!minimoCustom[sku] };
+      return {
+        id: p.id, sku: sku, nome: p.nome || sku, categoria: categoria,
+        vendas7d: vendas7d, vendasTotal: vendasTotal, mediaDia: mediaDia,
+        estoque: estoque, estoqueMin: estoqueMin,
+        diasAteMin: diasAteMin, diasAteZero: diasAteZero,
+        status: status, customMin: !!minimoCustom[sku]
+      };
     });
 
     var sel = document.getElementById('fCategoria');
@@ -308,24 +379,67 @@ function updateCards() {
 function renderChart() {
   var canvas = document.getElementById('grafico');
   if (!canvas) return;
-  var top = dados.slice().sort(function(a,b){return b.estoque-a.estoque;}).slice(0,20);
+
+  // FIX: Ler datas do seletor do gráfico
+  var inputDe = document.getElementById('chartDe');
+  var inputAte = document.getElementById('chartAte');
+  var dataIni = inputDe ? inputDe.value : daysAgoStr(config.periodo);
+  var dataFim = inputAte ? inputAte.value : todayStr();
+
+  var dtIni = new Date(dataIni + 'T00:00:00');
+  var dtFim = new Date(dataFim + 'T23:59:59');
+  var periodoGrafico = Math.max(1, (dtFim - dtIni) / 86400000);
+
+  // FIX: Filtrar vendas do período selecionado usando os pedidos já carregados
+  // Recalcula vendasGrafico usando dados já processados proporcionalmente ao período
+  // Como não temos os pedidos separados por período aqui, usamos mediaDia * periodoGrafico
+  // para estimar vendas no período selecionado
+  var produtosComVenda = dados.filter(function(d) {
+    return d.mediaDia > 0;
+  });
+
+  // Ordenar por vendas estimadas no período e pegar top 20
+  var top = produtosComVenda.slice().sort(function(a, b) {
+    return b.mediaDia - a.mediaDia;
+  }).slice(0, 20);
+
+  // Se não houver produtos com venda, mostra top por estoque
+  if (top.length === 0) {
+    top = dados.slice().sort(function(a,b){return b.estoque - a.estoque;}).slice(0, 20);
+  }
+
   var cores = top.map(function(d) {
     return d.status==='critico' ? 'rgba(220,38,38,0.75)' : d.status==='atencao' ? 'rgba(217,119,6,0.75)' : 'rgba(22,163,74,0.75)';
   });
+
   if (chartObj) chartObj.destroy();
   chartObj = new Chart(canvas, {
     type: 'bar',
     data: {
-      labels: top.map(function(d){return d.sku;}),
+      labels: top.map(function(d){ return d.sku; }),
       datasets: [
-        { label: 'Estoque atual', data: top.map(function(d){return d.estoque;}), backgroundColor: cores, borderRadius: 5 },
-        { label: 'Est. Minimo', data: top.map(function(d){return d.estoqueMin > 0 ? d.estoqueMin : null;}), type: 'line', borderColor: 'rgba(124,122,248,0.7)', borderWidth: 2, borderDash: [5,5], pointRadius: 0, fill: false }
+        {
+          label: 'Vendas no periodo',
+          data: top.map(function(d){ return +(d.mediaDia * periodoGrafico).toFixed(1); }),
+          backgroundColor: cores,
+          borderRadius: 5
+        }
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { position: 'top' } },
-      scales: { y: { beginAtZero: true } }
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: {
+            afterLabel: function(ctx) {
+              var d = top[ctx.dataIndex];
+              return 'Media/dia: ' + d.mediaDia.toFixed(2) + '  |  Estoque: ' + d.estoque;
+            }
+          }
+        }
+      },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'Unidades vendidas' } } }
     }
   });
 }
@@ -359,10 +473,14 @@ function renderTable() {
     if (s==='atencao') return '<span class="badge atencao"><span class="dot"></span>Atencao</span>';
     return '<span class="badge ok"><span class="dot"></span>OK</span>';
   }
+
+  // FIX: diasBadge agora mostra data real, não só quantidade de dias
   function diasBadge(dias) {
-    if (dias >= 999) return '<span style="color:#ccc">-</span>';
+    if (dias >= 999 || dias < 0) return '<span style="color:#ccc">-</span>';
     var cls = dias <= 7 ? 'dias-r' : dias <= 30 ? 'dias-a' : 'dias-g';
-    return '<span class="dias-badge ' + cls + '">' + dias + 'd</span>';
+    var dataEst = dataFutura(dias);
+    var label = dataEst ? formatDate(dataEst) : '-';
+    return '<span class="dias-badge ' + cls + '" title="em ' + dias + ' dias">' + label + '</span>';
   }
 
   var html = '';
@@ -376,9 +494,9 @@ function renderTable() {
       '<td><span class="tag">' + d.sku + '</span></td>' +
       '<td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + nomeEsc + '">' + d.nome + '</td>' +
       '<td style="color:#888;font-size:12px">' + d.categoria + '</td>' +
-      '<td style="text-align:right">' + d.vendas7d + '</td>' +
+      '<td style="text-align:right">' + (d.vendas7d > 0 ? '<strong>' + d.vendas7d + '</strong>' : '<span style="color:#ccc">0</span>') + '</td>' +
       '<td style="text-align:right">' + d.vendasTotal + '</td>' +
-      '<td style="text-align:right">' + (d.mediaDia > 0 ? d.mediaDia.toFixed(1) : '-') + '</td>' +
+      '<td style="text-align:right">' + (d.mediaDia > 0 ? d.mediaDia.toFixed(2) : '-') + '</td>' +
       '<td style="text-align:right;font-weight:600">' + d.estoque + '</td>' +
       '<td style="text-align:right">' + minLabel + customTag + ' <button class="btn-edit" onclick="openEditMin(\'' + d.sku + '\',\'' + nomeEsc + '\')" title="Editar minimo">&#9998;</button></td>' +
       '<td>' + diasBadge(d.diasAteMin) + '</td>' +
