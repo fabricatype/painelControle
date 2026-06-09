@@ -151,6 +151,29 @@ app.get('/debug/pedido/:id', async (req, res) => {
   request.end();
 });
 
+// Debug: lista todos os depósitos com nome e ID
+app.get('/debug/depositos', async (req, res) => {
+  let token;
+  try { token = await ensureToken(req); }
+  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
+  const options = {
+    hostname: 'www.bling.com.br',
+    path: '/Api/v3/depositos',
+    method: 'GET',
+    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+  };
+  const request = https.request(options, (response) => {
+    let data = '';
+    response.on('data', c => data += c);
+    response.on('end', () => {
+      try { res.json(JSON.parse(data)); }
+      catch(e) { res.json({ raw: data }); }
+    });
+  });
+  request.on('error', err => res.status(500).json({ error: err.message }));
+  request.end();
+});
+
 // Debug: saldos por depósito via /estoques/saldos
 app.get('/debug/saldos', async (req, res) => {
   let token;
