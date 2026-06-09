@@ -88,9 +88,14 @@ button.primary:hover{background:#6b69e8}
 </div>
 
 <script>
+// IDs dos depósitos do Bling
+var DEP_FATURAMENTO = 14888413957;
+var DEP_FULFILLMENT = 14888519189;
+
 var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":15}');
 var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
 var dados = [];
+var saldosDeposito = {}; // { idProduto: { fat: N, full: N } }
 var chartObj = null;
 var editSku = null;
 
@@ -229,10 +234,34 @@ async function syncDados() {
 
     // Filtra: SKU comeca com '0' E nao e kit
     produtos = produtos.filter(function(p) {
-      return p.codigo && String(p.codigo).startsWith('0') && p.formato !== 'K';
+      return p.codigo && String(p.codigo).startsWith('0') && p.formato !== 'K' &&
+             !(p.nome||'').toLowerCase().includes('kit');
     });
 
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="loading">Carregando saldos por deposito...</td></tr>';
+
+    // Busca saldos por depósito via /estoques/saldos em lotes de 20 IDs
+    saldosDeposito = {};
+    var ids = produtos.map(function(p){ return p.id; });
+    function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+    for (var si = 0; si < ids.length; si += 20) {
+      if (si > 0) await sleep(400);
+      var loteIds = ids.slice(si, si + 20);
+      var qs = loteIds.map(function(id){ return 'idsProdutos[]=' + id; }).join('&');
+      var rs = await blingGet('/estoques/saldos?' + qs);
+      (rs.data || []).forEach(function(item) {
+        var pid = item.produto && item.produto.id;
+        if (!pid) return;
+        var fat = 0, full = 0;
+        (item.depositos || []).forEach(function(dep) {
+          if (dep.id === DEP_FATURAMENTO) fat = dep.saldoVirtual || 0;
+          else if (dep.id === DEP_FULFILLMENT) full = dep.saldoVirtual || 0;
+        });
+        saldosDeposito[pid] = { fat: fat, full: full };
+      });
+    }
+
+    tbody.innerHTML = '<tr><td colspan="13" class="loading">Carregando vendas... (' + produtos.length + ' produtos)</td></tr>';
 
     var hoje = new Date();
     var dataFim = hoje.toISOString().split('T')[0];
@@ -267,17 +296,12 @@ async function syncDados() {
     dados = produtos.map(function(p) {
       var sku = String(p.codigo);
       var estoque = (p.estoque && p.estoque.saldoVirtualTotal) ? p.estoque.saldoVirtualTotal : 0;
-      // Estoque por depósito
-      var estoqueFat = 0, estoqueFull2 = 0;
-      var deps = p.estoques || p.depositos || [];
-      deps.forEach(function(dep) {
-        var nome = (dep.descricao || dep.nome || '').toLowerCase();
-        var saldo = dep.saldoVirtual != null ? dep.saldoVirtual : (dep.saldo != null ? dep.saldo : 0);
-        if (nome.includes('faturamento')) estoqueFat += saldo;
-        else if (nome.includes('fulfillment') || nome.includes('full')) estoqueFull2 += saldo;
-      });
-      // Fallback: se não veio separado usa total como faturamento
-      if (estoqueFat === 0 && estoqueFull2 === 0) estoqueFat = estoque;
+      // Estoque por depósito via /estoques/saldos
+      var depSaldo = saldosDeposito[p.id] || {};
+      var estoqueFat = depSaldo.fat != null ? depSaldo.fat : estoque;
+      var estoqueFull2 = depSaldo.full || 0;
+      // Fallback: se não buscou separado usa total como faturamento
+      if (!saldosDeposito[p.id]) { estoqueFat = estoque; estoqueFull2 = 0; }
       var vendasTotal = vendasMap[sku] || 0;
       var vendas7d = vendas7dMap[sku] || 0;
       var mediaDia = vendasTotal / config.periodo;
