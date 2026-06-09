@@ -158,7 +158,7 @@ app.get('/debug/saldos', async (req, res) => {
   catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
   const options = {
     hostname: 'www.bling.com.br',
-    path: '/Api/v3/estoques/saldos?pagina=1&limite=5',
+    path: '/Api/v3/estoques/saldos?pagina=1&limite=5' + (req.query.id ? '&idsProdutos[]=' + req.query.id : ''),
     method: 'GET',
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
   };
