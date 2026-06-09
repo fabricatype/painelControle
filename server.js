@@ -12,7 +12,6 @@ const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   : 'http://localhost:8080';
 const REDIRECT_URI = BASE_URL + '/callback';
 
-// Sessões em memória: { sessionId -> { accessToken, refreshToken, tokenExpiry } }
 const sessions = {};
 
 function getSession(req) {
@@ -47,7 +46,6 @@ app.get('/callback', async (req, res) => {
       refreshToken: token.refresh_token,
       tokenExpiry: Date.now() + (token.expires_in * 1000)
     };
-    // Cookie dura 6 horas (tempo do access token do Bling)
     res.setHeader('Set-Cookie', 'sid=' + sid + '; HttpOnly; SameSite=Lax; Max-Age=21600; Path=/');
     res.redirect('/');
   } catch (err) { res.send('Erro ao obter token: ' + err.message); }
@@ -101,7 +99,7 @@ app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!(sess && Date.now() < sess.tokenExpiry) });
 });
 
-// Debug: busca múltiplos pedidos — /debug/pedidos/id1,id2,id3
+// Debug: múltiplos pedidos
 app.get('/debug/pedidos/:ids', async (req, res) => {
   let token;
   try { token = await ensureToken(req); }
@@ -130,7 +128,7 @@ app.get('/debug/pedidos/:ids', async (req, res) => {
   res.json(results);
 });
 
-// Debug: retorna resposta RAW completa do pedido
+// Debug: pedido RAW
 app.get('/debug/pedido/:id', async (req, res) => {
   let token;
   try { token = await ensureToken(req); }
@@ -141,12 +139,42 @@ app.get('/debug/pedido/:id', async (req, res) => {
     method: 'GET',
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
   };
-  const request = require('https').request(options, (response) => {
+  const request = https.request(options, (response) => {
     let data = '';
     response.on('data', c => data += c);
     response.on('end', () => {
       try { res.json(JSON.parse(data)); }
       catch(e) { res.json({ raw: data }); }
+    });
+  });
+  request.on('error', err => res.status(500).json({ error: err.message }));
+  request.end();
+});
+
+// Debug: estrutura de estoque por depósito de um produto
+app.get('/debug/produto/:id', async (req, res) => {
+  let token;
+  try { token = await ensureToken(req); }
+  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
+  const options = {
+    hostname: 'www.bling.com.br',
+    path: '/Api/v3/produtos/' + req.params.id,
+    method: 'GET',
+    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+  };
+  const request = https.request(options, (response) => {
+    let data = '';
+    response.on('data', c => data += c);
+    response.on('end', () => {
+      try {
+        const json = JSON.parse(data);
+        const d = json.data || {};
+        res.json({
+          id: d.id, codigo: d.codigo, nome: d.nome,
+          estoque: d.estoque,
+          estoques: d.estoques || []
+        });
+      } catch(e) { res.json({ raw: data }); }
     });
   });
   request.on('error', err => res.status(500).json({ error: err.message }));
@@ -160,7 +188,7 @@ app.get('/logout', (req, res) => {
   res.redirect('/');
 });
 
-// Proxy para a API do Bling — token por sessão
+// Proxy para a API do Bling
 app.use('/api/bling', async (req, res) => {
   let token;
   try { token = await ensureToken(req); }
