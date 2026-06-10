@@ -207,8 +207,23 @@ var PERIOD_OPTS=[
 function setPeriodo(which,tipo,ini,fim){
   var opt=PERIOD_OPTS.find(function(o){return o.id===tipo;})||{dias:30};
   var p={tipo:tipo,ini:ini||(opt.dias?daysAgoStr(opt.dias):daysAgoStr(30)),fim:fim||todayStr()};
-  if(which==='chart'){chartPeriodo=p;updatePeriodUI('chart');renderChart();}
-  else{tablePeriodo=p;updatePeriodUI('table');recalcularTabela();}
+  if(which==='chart'){chartPeriodo=p;updatePeriodUI('chart');}
+  else{tablePeriodo=p;updatePeriodUI('table');}
+  // Se temos dados carregados, verifica se o novo período está coberto
+  if(pedidosBrutos.length>0){
+    var dataIniBusca=[chartPeriodo.ini,tablePeriodo.ini].sort()[0];
+    var primeiroPedido=pedidosBrutos.reduce(function(min,ped){
+      var d=extrairData(ped);return d<min?d:min;
+    },new Date());
+    var dataBuscada=new Date(dataIniBusca+'T00:00:00');
+    if(dataBuscada<primeiroPedido){
+      // Período pedido é maior que o carregado — precisa rebuscar
+      syncDados();
+      return;
+    }
+  }
+  if(which==='chart')renderChart();
+  else recalcularTabela();
 }
 function updatePeriodUI(which){
   var p=which==='chart'?chartPeriodo:tablePeriodo;
@@ -224,7 +239,7 @@ function periodBtns(which){
   var p=which==='chart'?chartPeriodo:tablePeriodo;
   var btns=PERIOD_OPTS.map(function(o){
     var cls=o.id===p.tipo?' active':'';
-    var fn=o.id==='custom'?('toggleCustom(\"'+which+'\")'):'setPeriodo(\"'+which+'\",\"'+o.id+'\")';
+    var fn=o.id==='custom'?'toggleCustom(\''+which+'\')':'setPeriodo(\''+which+'\',\''+o.id+'\')';
     return'<button id="'+which+'_btn_'+o.id+'" class="pbtn'+cls+'" onclick="'+fn+'">'+o.label+'</button>';
   }).join('');
   var open=p.tipo==='custom'?' open':'';
