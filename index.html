@@ -358,7 +358,9 @@ function renderPainel(){
     '<span id="lastSync"></span>'+
     '<button class="hbtn" onclick="syncDados()">🔄 Atualizar</button>'+
     '<button class="hbtn" onclick="openConfig()">⚙️ Configurações</button>'+
+    '<button class="hbtn" onclick="toggleDebug()" style="opacity:.5;font-size:11px">Debug</button>'+
     '</div></header>'+
+    '<div id="debugBox" style="display:none;background:#111;color:#4eff91;font-family:monospace;font-size:11px;padding:10px 24px;max-height:160px;overflow-y:auto;white-space:pre-wrap"></div>'+
     // CARDS
     '<div class="cards">'+
     '<div class="card"><div class="num" id="cTotal">-</div><div class="lbl">Produtos</div></div>'+
@@ -415,6 +417,9 @@ function renderPainel(){
     '</table></div>';
 }
 
+function toggleDebug(){var b=document.getElementById('debugBox');if(b)b.style.display=b.style.display==='block'?'none':'block';}
+function log(msg){console.log(msg);var b=document.getElementById('debugBox');if(b){b.textContent+=msg+'\n';b.scrollTop=b.scrollHeight;}}
+
 async function blingGet(path){
   var r=await fetch('/api/bling'+path);
   if(r.status===401){renderLogin();throw new Error('Sessão expirada');}
@@ -426,7 +431,9 @@ async function syncDados(){
   var tbody=document.getElementById('tbody');
   if(!tbody)return;
   tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando produtos...</td></tr>';
+  var debugBox=document.getElementById('debugBox');if(debugBox)debugBox.textContent='';
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  log('[Sync] Iniciando...');
   try{
     // Produtos
     var produtos=[],pagina=1;
@@ -441,6 +448,7 @@ async function syncDados(){
       var nome=(p.nome||"").toLowerCase();
       return!nome.includes('kit');
     });
+    log('[Produtos] filtrados: '+produtos.length);
 
     // Saldos por depósito
     tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando saldos por depósito...</td></tr>';
@@ -479,6 +487,7 @@ async function syncDados(){
           var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIniSync+'&dataFinal='+hoje+'&situacao='+SITS[si2].id+'&pagina='+pagina+'&limite=100');
           var ip=rp.data||[];
           ip.forEach(function(p){if(p.id)listaIds.push({id:p.id,data:p.data,origem:SITS[si2].origem});});
+          log('[Pedidos] sit'+SITS[si2].id+' pag'+pagina+': '+ip.length+' resultados');
           if(ip.length<100)break;pagina++;if(pagina>20)break;
         }
       }
@@ -550,8 +559,10 @@ async function syncDados(){
     recalcularTabela();
     renderChart();
   }catch(err){
+    log('[ERRO] '+err.message+'\n'+(err.stack||''));
+    var db=document.getElementById('debugBox');if(db)db.style.display='block';
     var tb=document.getElementById('tbody');
-    if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">Erro: '+err.message+'</td></tr>';
+    if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">❌ Erro: '+err.message+' — Veja o Debug no topo para detalhes.</td></tr>';
   }
 }
 
