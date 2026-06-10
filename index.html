@@ -468,7 +468,9 @@ async function syncDados(){
         });
         saldosDeposito[pid]={fat:fat,full:full};
       });
+      log('[Saldos] lote '+(si/20+1)+': '+Object.keys(saldosDeposito).length+' produtos com saldo');
     }
+    log('[Saldos] total: '+Object.keys(saldosDeposito).length);
 
     // Pedidos — histórico acumulado via localStorage
     tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando histórico de vendas...</td></tr>';
@@ -476,6 +478,7 @@ async function syncDados(){
     var dataIniHist=config.dataInicio||daysAgoStr(30);
     var dataIniSync=histVendas.lastDate||dataIniHist;
     // Busca incremental: só o que falta
+    log('[Hist] dataIniSync='+dataIniSync+' hoje='+hoje);
     if(dataIniSync<hoje){
       var SITS=[{id:15,origem:'normal'},{id:529911,origem:'fulfillment'}];
       var listaIds=[];
@@ -554,6 +557,7 @@ async function syncDados(){
       return{id:p.id,sku:sku,nome:p.nome||sku,categoria:cat,estoque:estoque,estoqueFat:estoqueFat,estoqueFull:estoqueFull2,customMin:false};
     });
 
+    log('[dadosBase] montado: '+dadosBase.length+' produtos');
     var ls=document.getElementById('lastSync');
     if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
     recalcularTabela();
