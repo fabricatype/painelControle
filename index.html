@@ -249,24 +249,42 @@ function toggleCustom(which){var p=which==='chart'?chartPeriodo:tablePeriodo;if(
 
 // ─── ORIGEM ───────────────────────────────────────────────────────────────────
 function atualizarColunasDeposito(){
-  // Colunas que somem conforme filtro da tabela
   var mostrarNormal = tableOrigem !== 'fulfillment';
   var mostrarFull   = tableOrigem !== 'normal';
-  var display_n = mostrarNormal ? '' : 'none';
-  var display_f = mostrarFull   ? '' : 'none';
+  var filtrado      = tableOrigem !== 'todos';
+
   // Cabeçalhos
-  var thN=document.getElementById('th_vendasNormal');   if(thN)thN.style.display=display_n;
-  var thF=document.getElementById('th_vendasFull');     if(thF)thF.style.display=display_f;
-  var thFat=document.getElementById('th_estoqueFat');   if(thFat)thFat.style.display=display_n;
-  var thFul=document.getElementById('th_estoqueFull');  if(thFul)thFul.style.display=display_f;
-  // Células (aplicado via CSS)
-  var styleId='col_visibility_style';
-  var el=document.getElementById(styleId);
-  if(!el){el=document.createElement('style');el.id=styleId;document.head.appendChild(el);}
-  var css='';
-  if(!mostrarNormal) css+='.col_vendasNormal,.col_estoqueFat{display:none}';
-  if(!mostrarFull)   css+='.col_vendasFull,.col_estoqueFull{display:none}';
-  el.textContent=css;
+  var thN   = document.getElementById('th_vendasNormal');
+  var thF   = document.getElementById('th_vendasFull');
+  var thT   = document.getElementById('th_vendasTotal');
+  var thFat = document.getElementById('th_estoqueFat');
+  var thFul = document.getElementById('th_estoqueFull');
+
+  if(thN)   thN.style.display   = (mostrarNormal && !filtrado) ? '' : (filtrado && mostrarNormal ? '' : 'none');
+  if(thF)   thF.style.display   = (mostrarFull   && !filtrado) ? '' : (filtrado && mostrarFull   ? '' : 'none');
+  if(thFat) thFat.style.display = mostrarNormal ? '' : 'none';
+  if(thFul) thFul.style.display = mostrarFull   ? '' : 'none';
+
+  // Quando filtrado: renomeia coluna visível para "Vendas" e esconde Total
+  if(filtrado){
+    if(thN && mostrarNormal) thN.childNodes[0].textContent = 'Vendas ';
+    if(thF && mostrarFull)   thF.childNodes[0].textContent = 'Vendas ';
+    if(thT) thT.style.display = 'none';
+  } else {
+    if(thN) thN.childNodes[0].textContent = 'Vendas Fat. ';
+    if(thF) thF.childNodes[0].textContent = 'Vendas Full ';
+    if(thT) thT.style.display = '';
+  }
+
+  // Células via CSS
+  var styleId = 'col_visibility_style';
+  var el = document.getElementById(styleId);
+  if(!el){el = document.createElement('style');el.id = styleId;document.head.appendChild(el);}
+  var css = '';
+  if(!mostrarNormal) css += '.col_vendasNormal,.col_estoqueFat{display:none}';
+  if(!mostrarFull)   css += '.col_vendasFull,.col_estoqueFull{display:none}';
+  if(filtrado)       css += '.col_vendasTotal{display:none}';
+  el.textContent = css;
 }
 
 function setOrigem(which,val){
@@ -432,9 +450,9 @@ function renderPainel(){
     '<th class="sortable" onclick="sortBy(&quot;sku&quot;)">SKU <span id="srt_sku"></span></th>'+
     '<th>Produto</th>'+
     '<th class="sortable" onclick="sortBy(&quot;categoria&quot;)">Categoria <span id="srt_categoria"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;vendasNormal&quot;)" style="text-align:right" id="th_vendasNormal">Normal <span id="srt_vendasNormal"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;vendasFull&quot;)" style="text-align:right" id="th_vendasFull">Full <span id="srt_vendasFull"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;vendasTotal&quot;)" style="text-align:right">Total <span id="srt_vendasTotal"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;vendasNormal&quot;)" style="text-align:right" id="th_vendasNormal">Vendas Fat. <span id="srt_vendasNormal"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;vendasFull&quot;)" style="text-align:right" id="th_vendasFull">Vendas Full <span id="srt_vendasFull"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;vendasTotal&quot;)" style="text-align:right" id="th_vendasTotal">Total <span id="srt_vendasTotal"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;mediaDia&quot;)" style="text-align:right">Méd/dia <span id="srt_mediaDia"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;estoqueFat&quot;)" style="text-align:right" id="th_estoqueFat" title="Estoque Faturamento">Fat. <span id="srt_estoqueFat"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;estoqueFull&quot;)" style="text-align:right" id="th_estoqueFull" title="Estoque Fulfillment ML">Full. <span id="srt_estoqueFull"></span></th>'+
@@ -791,7 +809,7 @@ function renderTable(){
       '<td style="color:#888;font-size:11px">'+d.categoria+'</td>'+
       '<td style="text-align:right" class="col_vendasNormal"><span style="color:#16a34a;font-weight:600">'+(d.vendasNormal||0)+'</span></td>'+
       '<td style="text-align:right" class="col_vendasFull"><span style="color:#f59e0b;font-weight:600">'+(d.vendasFull||0)+'</span></td>'+
-      '<td style="text-align:right;font-weight:600">'+d.vendasTotal+'</td>'+
+      '<td style="text-align:right;font-weight:600" class="col_vendasTotal">'+d.vendasTotal+'</td>'+
       '<td style="text-align:right">'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'</td>'+
       '<td style="text-align:right;font-weight:600;color:#1d4ed8" class="col_estoqueFat">'+(d.estoqueFat||0)+'</td>'+
       '<td style="text-align:right;color:#f59e0b" class="col_estoqueFull">'+(d.estoqueFull||0)+'</td>'+
