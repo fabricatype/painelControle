@@ -387,7 +387,7 @@ function saveConfig(){
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init(){
-  try{var r=await fetch('/auth/status');var s=await r.json();if(s.authenticated)renderPainel();else renderLogin();}
+  try{var r=await fetch('/auth/status');var s=await r.json();if(s.authenticated){renderPainel();setInterval(function(){fetch('/auth/status').catch(function(){});},600000);}else renderLogin();}
   catch(e){renderLogin();}
 }
 function renderLogin(){
