@@ -1,37 +1,24 @@
 const express = require('express');
 const https = require('https');
 const querystring = require('querystring');
-const crypto = require('crypto');
 const app = express();
 app.use(express.json());
 
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const BASE_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-  ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
-  : 'http://localhost:8080';
+const BASE_URL = process.env.PUBLIC_DOMAIN
+  ? 'https://' + process.env.PUBLIC_DOMAIN
+  : process.env.RAILWAY_PUBLIC_DOMAIN
+    ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
+    : 'http://localhost:8080';
 const REDIRECT_URI = BASE_URL + '/callback';
 
-const sessions = {};
-
-function getSession(req) {
-  const sid = parseCookie(req.headers.cookie || '')['sid'];
-  return sid && sessions[sid] ? { sid, ...sessions[sid] } : null;
-}
-
-function parseCookie(str) {
-  return str.split(';').reduce((acc, part) => {
-    const [k, ...v] = part.trim().split('=');
-    if (k) acc[k.trim()] = decodeURIComponent(v.join('='));
-    return acc;
-  }, {});
-}
+let accessToken = null;
+let refreshToken = null;
+let tokenExpiry = null;
 
 app.get('/login', (req, res) => {
-  const params = querystring.stringify({
-    response_type: 'code', client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI, state: 'painel'
-  });
+  const params = querystring.stringify({ response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, state: 'painel' });
   res.redirect('https://www.bling.com.br/Api/v3/oauth/authorize?' + params);
 });
 
@@ -39,29 +26,22 @@ app.get('/callback', async (req, res) => {
   const code = req.query.code;
   if (!code) return res.send('Erro: codigo nao recebido');
   try {
-    const token = await fetchToken('authorization_code', { code, redirect_uri: REDIRECT_URI });
-    const sid = crypto.randomBytes(24).toString('hex');
-    sessions[sid] = {
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token,
-      tokenExpiry: Date.now() + (token.expires_in * 1000)
-    };
-    res.setHeader('Set-Cookie', 'sid=' + sid + '; HttpOnly; SameSite=Lax; Max-Age=21600; Path=/');
+    const token = await fetchToken('authorization_code', { code: code, redirect_uri: REDIRECT_URI });
+    accessToken = token.access_token;
+    refreshToken = token.refresh_token;
+    tokenExpiry = Date.now() + (token.expires_in * 1000);
     res.redirect('/');
   } catch (err) { res.send('Erro ao obter token: ' + err.message); }
 });
 
-async function ensureToken(req) {
-  const sess = getSession(req);
-  if (!sess) throw new Error('Nao autenticado');
-  if (Date.now() > sess.tokenExpiry - 60000) {
-    const token = await fetchToken('refresh_token', { refresh_token: sess.refreshToken });
-    sessions[sess.sid].accessToken = token.access_token;
-    sessions[sess.sid].refreshToken = token.refresh_token || sess.refreshToken;
-    sessions[sess.sid].tokenExpiry = Date.now() + (token.expires_in * 1000);
-    return sessions[sess.sid].accessToken;
+async function ensureToken() {
+  if (!accessToken) throw new Error('Nao autenticado');
+  if (Date.now() > tokenExpiry - 60000) {
+    const token = await fetchToken('refresh_token', { refresh_token: refreshToken });
+    accessToken = token.access_token;
+    refreshToken = token.refresh_token || refreshToken;
+    tokenExpiry = Date.now() + (token.expires_in * 1000);
   }
-  return sess.accessToken;
 }
 
 function fetchToken(grantType, params) {
@@ -79,8 +59,8 @@ function fetchToken(grantType, params) {
     };
     const req = https.request(options, (response) => {
       let data = '';
-      response.on('data', c => data += c);
-      response.on('end', () => {
+      response.on('data', function(chunk) { data += chunk; });
+      response.on('end', function() {
         try {
           const json = JSON.parse(data);
           if (json.error) reject(new Error(JSON.stringify(json)));
@@ -95,172 +75,27 @@ function fetchToken(grantType, params) {
 }
 
 app.get('/auth/status', (req, res) => {
-  const sess = getSession(req);
-  res.json({ authenticated: !!(sess && Date.now() < sess.tokenExpiry) });
+  res.json({ authenticated: !!accessToken && Date.now() < tokenExpiry });
 });
 
-// Debug: múltiplos pedidos
-app.get('/debug/pedidos/:ids', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-  const ids = req.params.ids.split(',').slice(0, 5);
-  const results = await Promise.all(ids.map(id => new Promise((resolve) => {
-    const options = {
-      hostname: 'www.bling.com.br',
-      path: '/Api/v3/pedidos/vendas/' + id.trim(),
-      method: 'GET',
-      headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-    };
-    const request = require('https').request(options, (response) => {
-      let data = '';
-      response.on('data', c => data += c);
-      response.on('end', () => {
-        try {
-          const d = JSON.parse(data).data || {};
-          resolve({ id: d.id, numero: d.numero, data: d.data, situacao: d.situacao });
-        } catch(e) { resolve({ id, error: data.slice(0,100) }); }
-      });
-    });
-    request.on('error', err => resolve({ id, error: err.message }));
-    request.end();
-  })));
-  res.json(results);
-});
-
-// Debug: pedido RAW
-app.get('/debug/pedido/:id', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-  const options = {
-    hostname: 'www.bling.com.br',
-    path: '/Api/v3/pedidos/vendas/' + req.params.id,
-    method: 'GET',
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-  };
-  const request = https.request(options, (response) => {
-    let data = '';
-    response.on('data', c => data += c);
-    response.on('end', () => {
-      try { res.json(JSON.parse(data)); }
-      catch(e) { res.json({ raw: data }); }
-    });
-  });
-  request.on('error', err => res.status(500).json({ error: err.message }));
-  request.end();
-});
-
-// Debug: lista todos os depósitos com nome e ID
-app.get('/debug/depositos', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-  const options = {
-    hostname: 'www.bling.com.br',
-    path: '/Api/v3/depositos',
-    method: 'GET',
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-  };
-  const request = https.request(options, (response) => {
-    let data = '';
-    response.on('data', c => data += c);
-    response.on('end', () => {
-      try { res.json(JSON.parse(data)); }
-      catch(e) { res.json({ raw: data }); }
-    });
-  });
-  request.on('error', err => res.status(500).json({ error: err.message }));
-  request.end();
-});
-
-// Debug: saldos por depósito via /estoques/saldos
-app.get('/debug/saldos', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-  const options = {
-    hostname: 'www.bling.com.br',
-    path: '/Api/v3/estoques/saldos?pagina=1&limite=5' + (req.query.id ? '&idsProdutos[]=' + req.query.id : ''),
-    method: 'GET',
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-  };
-  const request = https.request(options, (response) => {
-    let data = '';
-    response.on('data', c => data += c);
-    response.on('end', () => {
-      try { res.json(JSON.parse(data)); }
-      catch(e) { res.json({ raw: data }); }
-    });
-  });
-  request.on('error', err => res.status(500).json({ error: err.message }));
-  request.end();
-});
-
-// Debug: estrutura de estoque por depósito de um produto
-app.get('/debug/produto/:id', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-  const options = {
-    hostname: 'www.bling.com.br',
-    path: '/Api/v3/produtos/' + req.params.id,
-    method: 'GET',
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-  };
-  const request = https.request(options, (response) => {
-    let data = '';
-    response.on('data', c => data += c);
-    response.on('end', () => {
-      try {
-        const json = JSON.parse(data);
-        const d = json.data || {};
-        res.json({
-          id: d.id, codigo: d.codigo, nome: d.nome,
-          estoque: d.estoque,
-          estoques: d.estoques || []
-        });
-      } catch(e) { res.json({ raw: data }); }
-    });
-  });
-  request.on('error', err => res.status(500).json({ error: err.message }));
-  request.end();
-});
-
-app.get('/logout', (req, res) => {
-  const sid = parseCookie(req.headers.cookie || '')['sid'];
-  if (sid) delete sessions[sid];
-  res.setHeader('Set-Cookie', 'sid=; HttpOnly; Max-Age=0; Path=/');
-  res.redirect('/');
-});
-
-// Proxy para a API do Bling
 app.use('/api/bling', async (req, res) => {
-  let token;
-  try { token = await ensureToken(req); }
-  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
-
+  try { await ensureToken(); } catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
   const qs = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
-  const blingPath = '/Api/v3' + req.path + qs;
-  console.log('[PROXY]', req.method, blingPath);
-
   const options = {
     hostname: 'www.bling.com.br',
-    path: blingPath,
+    path: '/Api/v3' + req.path + qs,
     method: req.method,
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+    headers: { Authorization: 'Bearer ' + accessToken, Accept: 'application/json' }
   };
-
   const request = https.request(options, (response) => {
     let data = '';
-    response.on('data', c => data += c);
-    response.on('end', () => {
-      console.log('[PROXY] status:', response.statusCode, '| bytes:', data.length);
+    response.on('data', function(chunk) { data += chunk; });
+    response.on('end', function() {
       try { res.status(response.statusCode).json(JSON.parse(data)); }
-      catch(e) { res.status(500).json({ error: 'Resposta invalida', raw: data.slice(0, 200) }); }
+      catch(e) { res.status(500).json({ error: 'Resposta invalida' }); }
     });
   });
-  request.on('error', err => res.status(500).json({ error: err.message }));
+  request.on('error', function(err) { res.status(500).json({ error: err.message }); });
   request.end();
 });
 
