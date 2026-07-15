@@ -361,13 +361,12 @@ function extrairData(pedido){
 
 // ─── CALCULAR VENDAS ──────────────────────────────────────────────────────────
 function calcularVendas(skuSet,dataIni,dataFim,origem,tipoIni){
-  // Para "hoje": de 00:00 GMT-3 até agora
-  // Para "24h": das últimas 24h em GMT-3
-  // Para demais: dia inteiro
-  var dtIni, dtFim;
+  var dtIni, dtFim, compararSoData=false;
   if(tipoIni==='hoje'){
-    dtIni=new Date(todayStr()+'T00:00:00');
-    dtFim=new Date(agoraStr());
+    // Compara só a data (string), ignora hora — evita bug de fuso UTC vs GMT-3
+    compararSoData=true;
+    dtIni=todayStr();
+    dtFim=todayStr();
   } else if(tipoIni==='1d'){
     dtIni=new Date(hoursAgoStr(24));
     dtFim=new Date(agoraStr());
@@ -379,8 +378,16 @@ function calcularVendas(skuSet,dataIni,dataFim,origem,tipoIni){
   pedidosBrutos.forEach(function(pedido){
     if(origem==='fulfillment'&&pedido._origem!=='fulfillment')return;
     if(origem==='normal'&&pedido._origem!=='normal')return;
-    var dt=extrairData(pedido);
-    if(dt<dtIni||dt>dtFim)return;
+    var passou=false;
+    if(compararSoData){
+      // Compara só a parte da data (YYYY-MM-DD) para evitar bug de fuso
+      var dataPedido=(pedido.data||'').slice(0,10);
+      passou=dataPedido>=dtIni&&dataPedido<=dtFim;
+    } else {
+      var dt=extrairData(pedido);
+      passou=dt>=dtIni&&dt<=dtFim;
+    }
+    if(!passou)return;
     var itens=pedido.itens||pedido.item||[];
     itens.forEach(function(item){
       var codigo=extrairSku(item);if(!codigo)return;
