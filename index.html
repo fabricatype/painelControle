@@ -158,8 +158,6 @@ var dataInicioBuscada = null; // data de início da última busca feita
 var histVendas = JSON.parse(localStorage.getItem('esq_hist') || '{"lastDate":"","vendas":{},"vendasFull":{}}');
 var chartObj = null, donutObj = null;
 var sortCol = 'status', sortDir = 1;
-var chartPeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
-var tablePeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
 var chartOrigem = 'todos', tableOrigem = 'todos';
 
 // ─── FERIADOS ─────────────────────────────────────────────────────────────────
@@ -180,8 +178,32 @@ function isDiaUtil(d){var w=d.getDay();return w!==0&&w!==6&&!isFeriado(d);}
 function avancarDiasUteis(ini,n){var d=new Date(ini),c=0;while(c<n){d.setDate(d.getDate()+1);if(isDiaUtil(d))c++;}return d;}
 function dateToStr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function fmtDate(s){if(!s)return'-';var p=s.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s;}
-function todayStr(){return new Date().toISOString().split('T')[0];}
-function daysAgoStr(n){var d=new Date();d.setDate(d.getDate()-n);return d.toISOString().split('T')[0];}
+// ─── DATA/HORA GMT-3 (Brasília) ───────────────────────────────────────────────
+function agoraBrasilia(){
+  // Retorna Date ajustado para GMT-3 independente do navegador
+  var agora=new Date();
+  var utc=agora.getTime()+agora.getTimezoneOffset()*60000;
+  return new Date(utc+(-3)*3600000);
+}
+function todayStr(){
+  var d=agoraBrasilia();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function todayStartStr(){return todayStr()+'T00:00:00';}
+function agoraStr(){
+  var d=agoraBrasilia();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+
+    'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':00';
+}
+function daysAgoStr(n){
+  var d=agoraBrasilia();d.setDate(d.getDate()-n);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function hoursAgoStr(n){
+  var d=agoraBrasilia();d.setHours(d.getHours()-n);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+
+    'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':00';
+}
 function periodoEmDias(ini,fim){return Math.max(1,Math.round((new Date(fim+'T23:59:59')-new Date(ini+'T00:00:00'))/86400000));}
 function calcStatus(est,min,diasZ,media){if(media<=0)return'ok';if(est<=min||diasZ<=7)return'critico';if(diasZ<=30)return'atencao';return'ok';}
 
@@ -201,16 +223,27 @@ function calcSugestao(diasAteAlvo){
 
 // ─── PERÍODO ──────────────────────────────────────────────────────────────────
 var PERIOD_OPTS=[
-  {id:'1d',label:'24h',dias:1},{id:'7d',label:'7d',dias:7},{id:'30d',label:'1m',dias:30},
+  {id:'hoje',label:'Hoje',dias:null},
+  {id:'1d',label:'24h',dias:null},
+  {id:'7d',label:'7d',dias:7},{id:'30d',label:'1m',dias:30},
   {id:'60d',label:'2m',dias:60},{id:'180d',label:'6m',dias:180},{id:'365d',label:'1a',dias:365},
   {id:'custom',label:'Personalizado',dias:null}
 ];
+function getPeriodoIni(tipo){
+  if(tipo==='hoje')return todayStr();           // 00:00 de hoje GMT-3
+  if(tipo==='1d')return daysAgoStr(1);          // 24h atrás GMT-3
+  var opt=PERIOD_OPTS.find(function(o){return o.id===tipo;});
+  return opt&&opt.dias?daysAgoStr(opt.dias):daysAgoStr(30);
+}
+// Gráfico padrão = Hoje; Tabela padrão = 1 mês
+var chartPeriodo = {tipo:'hoje', ini:todayStr(), fim:todayStr()};
+var tablePeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
 function setPeriodo(which,tipo,ini,fim){
-  var opt=PERIOD_OPTS.find(function(o){return o.id===tipo;})||{dias:30};
-  var p={tipo:tipo,ini:ini||(opt.dias?daysAgoStr(opt.dias):daysAgoStr(30)),fim:fim||todayStr()};
+  var iniCalc=ini||getPeriodoIni(tipo);
+  var fimCalc=fim||todayStr();
+  var p={tipo:tipo,ini:iniCalc,fim:fimCalc};
   if(which==='chart'){chartPeriodo=p;updatePeriodUI('chart');}
   else{tablePeriodo=p;updatePeriodUI('table');}
-  // Verifica se o novo período exige rebuscar dados do servidor
   var novoIni=[chartPeriodo.ini,tablePeriodo.ini].sort()[0];
   if(dataInicioBuscada===null||novoIni<dataInicioBuscada){
     syncDados();
@@ -327,8 +360,21 @@ function extrairData(pedido){
 }
 
 // ─── CALCULAR VENDAS ──────────────────────────────────────────────────────────
-function calcularVendas(skuSet,dataIni,dataFim,origem){
-  var dtIni=new Date(dataIni+'T00:00:00'),dtFim=new Date(dataFim+'T23:59:59');
+function calcularVendas(skuSet,dataIni,dataFim,origem,tipoIni){
+  // Para "hoje": de 00:00 GMT-3 até agora
+  // Para "24h": das últimas 24h em GMT-3
+  // Para demais: dia inteiro
+  var dtIni, dtFim;
+  if(tipoIni==='hoje'){
+    dtIni=new Date(todayStr()+'T00:00:00');
+    dtFim=new Date(agoraStr());
+  } else if(tipoIni==='1d'){
+    dtIni=new Date(hoursAgoStr(24));
+    dtFim=new Date(agoraStr());
+  } else {
+    dtIni=new Date(dataIni+'T00:00:00');
+    dtFim=new Date(dataFim+'T23:59:59');
+  }
   var vm={},vn={},vf={};
   pedidosBrutos.forEach(function(pedido){
     if(origem==='fulfillment'&&pedido._origem!=='fulfillment')return;
@@ -429,7 +475,8 @@ function renderPainel(){
     '<select id="chartCat" onchange="renderChart()"><option value="">Todas as categorias</option><option value="Espreguiçadeira">Espreguiçadeira</option><option value="Mesa de Centro">Mesa de Centro</option></select>'+
     '</div></div>'+
     periodBtns('chart')+
-    '<canvas id="grafico" height="90" style="margin-top:12px"></canvas>'+
+    '<div id="chartResumo" style="font-size:12px;color:#888;margin-top:8px"></div>'+
+    '<canvas id="grafico" height="90" style="margin-top:8px"></canvas>'+
     '</div>'+
     // FILTROS TABELA
     '<div class="top-bar">'+
@@ -626,7 +673,7 @@ async function syncDados(){
 function recalcularTabela(){
   if(!dadosBase.length)return;
   var skuSet={};dadosBase.forEach(function(d){skuSet[d.sku]=true;});
-  var calc=calcularVendas(skuSet,tablePeriodo.ini,tablePeriodo.fim,tableOrigem);
+  var calc=calcularVendas(skuSet,tablePeriodo.ini,tablePeriodo.fim,tableOrigem,tablePeriodo.tipo);
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var periodo=periodoEmDias(tablePeriodo.ini,tablePeriodo.fim);
 
@@ -680,13 +727,26 @@ function renderChart(){
   var canvas=document.getElementById('grafico');if(!canvas)return;
   var catFiltro=(document.getElementById('chartCat')||{}).value||''
   var skuSet={};dadosBase.forEach(function(d){skuSet[d.sku]=true;});
-  var calc=calcularVendas(skuSet,chartPeriodo.ini,chartPeriodo.fim,chartOrigem);
+  var calc=calcularVendas(skuSet,chartPeriodo.ini,chartPeriodo.fim,chartOrigem,chartPeriodo.tipo);
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var base=catFiltro?dadosBase.filter(function(d){return d.categoria===catFiltro;}):dadosBase;
   var comVenda=base.filter(function(d){return(vm[d.sku]||0)>0;});
   var top=comVenda.length>0
     ?comVenda.slice().sort(function(a,b){return(vm[b.sku]||0)-(vm[a.sku]||0);}).slice(0,20)
     :base.slice(0,20);
+
+  // Contador de vendas
+  var totalVendas=Object.values(vm).reduce(function(s,v){return s+v;},0);
+  var labelPeriodo=chartPeriodo.tipo==='hoje'?'hoje ('+String(agoraBrasilia().getHours()).padStart(2,'0')+'h)':
+    chartPeriodo.tipo==='1d'?'últimas 24h':
+    chartPeriodo.tipo==='7d'?'últimos 7 dias':
+    chartPeriodo.tipo==='30d'?'último mês':
+    chartPeriodo.tipo==='60d'?'últimos 2 meses':
+    chartPeriodo.tipo==='180d'?'últimos 6 meses':
+    chartPeriodo.tipo==='365d'?'último ano':
+    fmtDate(chartPeriodo.ini)+' – '+fmtDate(chartPeriodo.fim);
+  var resumoEl=document.getElementById('chartResumo');
+  if(resumoEl)resumoEl.textContent=totalVendas+' venda'+(totalVendas!==1?'s':'')+(totalVendas===0?'':' · ')+labelPeriodo;
 
   if(chartObj)chartObj.destroy();
   var datasets;
