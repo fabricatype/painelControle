@@ -48,6 +48,9 @@ function fetchToken(grantType, params) {
   return new Promise((resolve, reject) => {
     const body = querystring.stringify(Object.assign({ grant_type: grantType, redirect_uri: REDIRECT_URI }, params));
     const credentials = Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64');
+    console.log('[DEBUG] CLIENT_ID:', CLIENT_ID ? CLIENT_ID.slice(0,6)+'...' : 'VAZIO');
+    console.log('[DEBUG] CLIENT_SECRET:', CLIENT_SECRET ? CLIENT_SECRET.slice(0,6)+'...' : 'VAZIO');
+    console.log('[DEBUG] REDIRECT_URI:', REDIRECT_URI);
     const options = {
       hostname: 'www.bling.com.br', path: '/Api/v3/oauth/token', method: 'POST',
       headers: {
