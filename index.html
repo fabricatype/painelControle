@@ -439,8 +439,99 @@ function saveConfig(){
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
+// ─── SYNC LEVE (automático a cada 10 min) ────────────────────────────────────
+async function syncLeve(){
+  if(!dadosBase.length)return; // só roda se já teve carga completa
+  function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  try{
+    var hoje=todayStr();
+    var dataIni2h=hoursAgoStr(2).slice(0,10); // data de 2h atrás (pode ser ontem perto da meia-noite)
+
+    // 1. Busca pedidos das últimas 2h
+    var SITS=[{id:15,origem:'normal'},{id:21,origem:'normal'},{id:529911,origem:'fulfillment'}];
+    var novosIds=[];
+    for(var si=0;si<SITS.length;si++){
+      if(si>0)await sleep(400);
+      var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIni2h+'&dataFinal='+hoje+'&situacao='+SITS[si].id+'&pagina=1&limite=100');
+      (rp.data||[]).forEach(function(p){if(p.id)novosIds.push({id:p.id,data:p.data,origem:SITS[si].origem});});
+    }
+    // Dedup
+    var idMap={};
+    novosIds.forEach(function(p){if(!idMap[p.id]||p.origem==='fulfillment')idMap[p.id]=p;});
+    novosIds=Object.keys(idMap).map(function(k){return idMap[k];});
+
+    // Busca detalhes dos novos pedidos
+    var novosPedidos=[];
+    for(var i=0;i<novosIds.length;i+=3){
+      if(i>0)await sleep(500);
+      var lote=novosIds.slice(i,i+3);
+      var res=await Promise.all(lote.map(function(ref){
+        return blingGet('/pedidos/vendas/'+ref.id).then(function(rs){
+          if(rs&&rs.data&&!rs.data.error){
+            var pedido=rs.data;
+            if(!pedido.data)pedido.data=ref.data;
+            var sitId=pedido.situacao&&pedido.situacao.id;
+            pedido._origem=sitId===529911?'fulfillment':'normal';
+            return pedido;
+          }
+          return null;
+        }).catch(function(){return null;});
+      }));
+      res.forEach(function(p){if(p)novosPedidos.push(p);});
+    }
+
+    // Mescla com pedidosBrutos: substitui se ID já existe, adiciona se novo
+    var pedidosMap={};
+    pedidosBrutos.forEach(function(p){pedidosMap[p.id]=p;});
+    novosPedidos.forEach(function(p){pedidosMap[p.id]=p;});
+    pedidosBrutos=Object.values(pedidosMap);
+
+    // 2. Atualiza saldos de estoque
+    var ids=dadosBase.map(function(p){return p.id;});
+    for(var si2=0;si2<ids.length;si2+=20){
+      if(si2>0)await sleep(400);
+      var loteIds=ids.slice(si2,si2+20);
+      var qs=loteIds.map(function(id){return'idsProdutos[]='+id;}).join('&');
+      var rs2=await blingGet('/estoques/saldos?'+qs);
+      (rs2.data||[]).forEach(function(item){
+        var pid=item.produto&&item.produto.id;if(!pid)return;
+        var fat=0,full=0;
+        (item.depositos||[]).forEach(function(dep){
+          if(dep.id===DEP_FATURAMENTO)fat=dep.saldoVirtual||0;
+          else if(dep.id===DEP_FULFILLMENT)full=dep.saldoVirtual||0;
+        });
+        saldosDeposito[pid]={fat:fat,full:full};
+      });
+    }
+
+    // 3. Atualiza dadosBase com novos saldos
+    dadosBase=dadosBase.map(function(b){
+      var dep=saldosDeposito[b.id]||{};
+      return Object.assign({},b,{
+        estoqueFat:dep.fat!=null?dep.fat:b.estoque,
+        estoqueFull:dep.full||0
+      });
+    });
+
+    // 4. Recalcula silenciosamente mantendo todos os filtros
+    recalcularTabela();
+    renderChart();
+    var ls=document.getElementById('lastSync');
+    if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
+    log('[SyncLeve] OK — '+novosPedidos.length+' pedidos atualizados');
+  }catch(e){
+    log('[SyncLeve] Erro: '+e.message);
+  }
+}
+
 async function init(){
-  try{var r=await fetch('/auth/status');var s=await r.json();if(s.authenticated){renderPainel();setInterval(function(){fetch('/auth/status').catch(function(){});},600000);}else renderLogin();}
+  try{var r=await fetch('/auth/status');var s=await r.json();
+    if(s.authenticated){
+      renderPainel();
+      // A cada 10 min: atualiza dados silenciosamente (mantém servidor acordado também)
+      setInterval(function(){syncLeve();},600000);
+    }else renderLogin();
+  }
   catch(e){renderLogin();}
 }
 function renderLogin(){
@@ -582,7 +673,14 @@ async function syncDados(){
     var dataIniBusca=[chartPeriodo.ini, tablePeriodo.ini, config.dataInicio||daysAgoStr(30)].sort()[0];
     log('[Pedidos] buscando de '+dataIniBusca+' ate '+hoje);
 
-    var SITS=[{id:15,origem:'normal'},{id:529911,origem:'fulfillment'}];
+    // Situações válidas como venda:
+    // 15 = Em andamento (com NF), 21 = Em digitação (enviado fábrica), 529911 = Fulfillment ML
+    // Excluídos: 12 (Cancelado), 724811 (Devolvido), 609955 (Avariado)
+    var SITS=[
+      {id:15,origem:'normal'},
+      {id:21,origem:'normal'},
+      {id:529911,origem:'fulfillment'}
+    ];
     var listaIds=[];
     for(var si2=0;si2<SITS.length;si2++){
       if(si2>0)await sleep(400);
@@ -596,9 +694,12 @@ async function syncDados(){
         if(ip.length<100)break;pagina++;if(pagina>20)break;
       }
     }
-    // Dedup: fulfillment tem prioridade
+    // Dedup: mesmo pedido pode aparecer em sit15 e sit21 (mesmo ID, fases diferentes)
+    // Fulfillment tem prioridade; entre 15 e 21, mantém qualquer (mesmo pedido)
     var idMap={};
-    listaIds.forEach(function(p){if(!idMap[p.id]||p.origem==='fulfillment')idMap[p.id]=p;});
+    listaIds.forEach(function(p){
+      if(!idMap[p.id]||p.origem==='fulfillment')idMap[p.id]=p;
+    });
     listaIds=Object.keys(idMap).map(function(k){return idMap[k];});
     log('[Pedidos] dedup: '+listaIds.length+' pedidos únicos');
 
