@@ -630,9 +630,18 @@ function renderPainel(){
 function toggleDebug(){var b=document.getElementById('debugBox');if(b)b.style.display=b.style.display==='block'?'none':'block';}
 function log(msg){console.log(msg);var b=document.getElementById('debugBox');if(b){b.textContent+=msg+'\n';b.scrollTop=b.scrollHeight;}}
 
-async function blingGet(path){
-  var r=await fetch('/api/bling'+path);
-  if(r.status===401){renderLogin();throw new Error('Sessão expirada');}
+async function blingGet(path, tentativa){
+  tentativa = tentativa || 1;
+  var r = await fetch('/api/bling' + path);
+  if(r.status === 401){renderLogin(); throw new Error('Sessão expirada');}
+  if(r.status === 429){
+    if(tentativa <= 3){
+      log('[Rate limit] aguardando 2s... tentativa ' + tentativa);
+      await new Promise(function(res){setTimeout(res, 2000 * tentativa);});
+      return blingGet(path, tentativa + 1);
+    }
+    throw new Error('Rate limit após 3 tentativas');
+  }
   return r.json();
 }
 
