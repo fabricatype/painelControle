@@ -1048,7 +1048,7 @@ function renderMetricasPeriodoBtns(){
   var el=document.getElementById('metricasPeriodoBtns');if(!el)return;
   el.innerHTML=opts.map(function(o){
     var ativo=o.id===metricasPeriodo.tipo?' active':'';
-    return'<button class="pbtn'+ativo+'" onclick="setMetricasPeriodo(\''+o.id+'\')">'+o.label+'</button>';
+    return'<button class="pbtn'+ativo+'" onclick="setMetricasPeriodo(&quot;'+o.id+'&quot;)">'+o.label+'</button>';
   }).join('');
 }
 
