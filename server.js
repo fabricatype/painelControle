@@ -394,6 +394,8 @@ app.get('/api/sync-status', (req, res) => {
   }
   res.json({ status: prog.status, pct: prog.pct, msg: prog.msg });
 });
+
+app.get('/logout', (req, res) => {
   const sid = parseCookie(req.headers.cookie || '')['sid'];
   if (sid) delete sessions[sid];
   res.setHeader('Set-Cookie', 'sid=; HttpOnly; Max-Age=0; Path=/');
