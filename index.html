@@ -74,10 +74,25 @@ button.primary:hover{background:#6b69e8}
 .min-cell{cursor:pointer;border-radius:4px;padding:2px 4px;transition:.15s}
 .min-cell:hover{background:#f0eeff;color:#7c7af8}
 .min-cell input{width:60px;padding:2px 6px;font-size:12px;border:1px solid #7c7af8;border-radius:4px;outline:none}
-.sug-badge{font-size:11px;font-weight:600;padding:2px 7px;border-radius:6px}
-.sug-ok{background:#f0fdf4;color:#16a34a}
-.sug-warn{background:#fffbeb;color:#d97706}
-.sug-late{background:#fef2f2;color:#dc2626}
+.tabs{display:flex;gap:0;padding:12px 24px 0;border-bottom:1px solid #e5e5e5;margin:0 0 0}
+.tab{padding:9px 20px;font-size:13px;font-weight:500;color:#888;cursor:pointer;border-bottom:2px solid transparent;transition:.15s;background:none;border-top:none;border-left:none;border-right:none;border-radius:0}
+.tab:hover{color:#0d2b35}
+.tab.active{color:#0d2b35;border-bottom-color:#0d2b35;font-weight:600}
+.tab-content{display:none}.tab-content.active{display:block}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;padding:16px 24px}
+.metric-card{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:16px}
+.metric-card h4{font-size:12px;font-weight:600;color:#666;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.metric-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.metric-bar-wrap{flex:1;height:8px;background:#f0f0f0;border-radius:4px;overflow:hidden}
+.metric-bar{height:100%;border-radius:4px;transition:.3s}
+.metric-label{font-size:12px;color:#444;min-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.metric-val{font-size:12px;font-weight:600;color:#1a1a1a;min-width:32px;text-align:right}
+.metric-pct{font-size:11px;color:#888;min-width:36px;text-align:right}
+.metric-period-bar{padding:12px 24px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.dev-card{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:16px;margin:0 24px 16px}
+.dev-card h4{font-size:12px;font-weight:600;color:#dc2626;margin-bottom:8px;text-transform:uppercase}
+.dev-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f5f5f5;font-size:12px}
+.dev-row:last-child{border-bottom:none}
 @media(max-width:700px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -570,8 +585,13 @@ function renderPainel(){
     '<button class="hbtn" onclick="toggleDebug()" style="opacity:.5;font-size:11px">Debug</button>'+
     '</div></header>'+
     '<div id="debugBox" style="display:none;background:#111;color:#4eff91;font-family:monospace;font-size:11px;padding:10px 24px;max-height:160px;overflow-y:auto;white-space:pre-wrap"></div>'+
-    // CARDS
-    '<div class="cards">'+
+    // ABAS
+    '<div class="tabs">'+
+    '<button class="tab active" onclick="switchTab(\'estoque\')">📦 Estoque</button>'+
+    '<button class="tab" onclick="switchTab(\'metricas\')">📊 Métricas</button>'+
+    '</div>'+
+    // ABA ESTOQUE
+    '<div id="tab_estoque" class="tab-content active">'+
     '<div class="card"><div class="num" id="cTotal">-</div><div class="lbl">Produtos</div></div>'+
     '<div class="card critico"><div class="num" id="cCritico">-</div><div class="lbl">Crítico</div></div>'+
     '<div class="card atencao"><div class="num" id="cAtencao">-</div><div class="lbl">Atenção</div></div>'+
@@ -624,7 +644,16 @@ function renderPainel(){
     '<th class="sortable" onclick="sortBy(&quot;sugestaoInicio&quot;)">Iniciar Fabr. <span id="srt_sugestaoInicio"></span></th>'+
     '</tr></thead>'+
     '<tbody id="tbody"><tr><td colspan="14" class="loading">Clique em Atualizar para carregar os dados</td></tr></tbody>'+
-    '</table></div>';
+    '</table></div>'+
+    '</div>'+ // fecha tab_estoque
+    // ABA MÉTRICAS
+    '<div id="tab_metricas" class="tab-content">'+
+    '<div style="padding:12px 24px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">'+
+    '<div id="metricasPeriodoBtns" style="display:flex;gap:6px;flex-wrap:wrap"></div>'+
+    '<span id="metricasResumo" style="font-size:12px;color:#888"></span>'+
+    '</div>'+
+    '<div id="metricasConteudo" style="padding:8px 0"><div class="loading">Carregue os dados primeiro</div></div>'+
+    '</div>';
 }
 
 function toggleDebug(){var b=document.getElementById('debugBox');if(b)b.style.display=b.style.display==='block'?'none':'block';}
@@ -911,6 +940,192 @@ function renderChart(){
   });
   updatePeriodUI('chart');
   updateOrigemUI('chart');
+}
+
+// ─── ABAS ─────────────────────────────────────────────────────────────────────
+function switchTab(tab){
+  document.querySelectorAll('.tab').forEach(function(b){b.classList.toggle('active',b.getAttribute('onclick').includes("'"+tab+"'"));});
+  document.querySelectorAll('.tab-content').forEach(function(el){el.classList.remove('active');});
+  var el=document.getElementById('tab_'+tab);if(el)el.classList.add('active');
+  if(tab==='metricas')renderMetricas();
+}
+
+// ─── CLASSIFICAÇÃO DE SKU ─────────────────────────────────────────────────────
+var SKU_PRODUTO   = {'1':'Espreguiçadeira','2':'Mesa de Centro'};
+var SKU_MATERIAL  = {'1':'Aço/Ferro','2':'Alumínio'};
+var SKU_ESTRUTURA = {'1':'Preto Fosco','2':'Champagne'};
+var SKU_ACABAMENTO= {'1':'Junco','2':'Acquaflex','3':'Tela Sling','4':'Resort'};
+var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5':'Argila','6':'Verde-Oliva','7':'Marrom','8':'Estampada'};
+
+function classificarSku(sku){
+  // SKU: 0{prod}{mat}{estr}{acab}{cor1}{cor2}
+  // ex: 011112 → 0,1,1,1,1,2
+  var s=String(sku);
+  if(!s.startsWith('0')||s.length<7)return null;
+  return{
+    produto:  SKU_PRODUTO[s[1]]||'?',
+    material: SKU_MATERIAL[s[2]]||'?',
+    estrutura:SKU_ESTRUTURA[s[3]]||'?',
+    acabamento:SKU_ACABAMENTO[s[4]]||'?',
+    cor:      SKU_COR[s[5]+s[6]]||SKU_COR[s[5]]||'?'
+  };
+}
+
+function classificarKit(codigo){
+  // Retorna tipo do kit: 'unit', 'kit2', 'kit3', 'kit4', 'kit2m', 'kit4m'
+  var s=String(codigo);
+  if(!s.startsWith('KT'))return'unit';
+  var resto=s.slice(2);
+  var qtd=parseInt(resto[0],10);
+  var temMesa=resto.includes('_');
+  if(qtd===2)return temMesa?'kit2m':'kit2';
+  if(qtd===3)return'kit3';
+  if(qtd===4)return temMesa?'kit4m':'kit4';
+  return'kit';
+}
+
+// ─── MÉTRICAS ─────────────────────────────────────────────────────────────────
+var metricasPeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
+
+function renderMetricasPeriodoBtns(){
+  var opts=[
+    {id:'hoje',label:'Hoje'},{id:'1d',label:'24h'},{id:'7d',label:'7d'},
+    {id:'30d',label:'1m'},{id:'60d',label:'2m'},{id:'180d',label:'6m'},{id:'365d',label:'1a'}
+  ];
+  var el=document.getElementById('metricasPeriodoBtns');if(!el)return;
+  el.innerHTML=opts.map(function(o){
+    var ativo=o.id===metricasPeriodo.tipo?' active':'';
+    return'<button class="pbtn'+ativo+'" onclick="setMetricasPeriodo(\''+o.id+'\')">'+o.label+'</button>';
+  }).join('');
+}
+
+function setMetricasPeriodo(tipo){
+  metricasPeriodo={tipo:tipo,ini:getPeriodoIni(tipo),fim:todayStr()};
+  renderMetricas();
+}
+
+function renderMetricas(){
+  renderMetricasPeriodoBtns();
+  if(!pedidosBrutos.length){
+    document.getElementById('metricasConteudo').innerHTML='<div class="loading">Carregue os dados primeiro</div>';
+    return;
+  }
+
+  var dtIni,dtFim,compararSoData=false;
+  if(metricasPeriodo.tipo==='hoje'){compararSoData=true;dtIni=todayStr();dtFim=todayStr();}
+  else if(metricasPeriodo.tipo==='1d'){dtIni=new Date(hoursAgoStr(24));dtFim=new Date(agoraStr());}
+  else{dtIni=new Date(metricasPeriodo.ini+'T00:00:00');dtFim=new Date(metricasPeriodo.fim+'T23:59:59');}
+
+  // Acumula dados por pedido (para kits) e por SKU unitário (para o resto)
+  var porTipo={},porEstrutura={},porAcabamentoEspr={},porAcabamentoMesa={},porCorEspr={},porCorMesa={},porKit={};
+  var totalUnid=0,totalPedidos=0;
+  var devolvidos=[],avariados=[];
+
+  pedidosBrutos.forEach(function(pedido){
+    var dataPedido=(pedido.data||'').slice(0,10);
+    var passou=compararSoData?(dataPedido>=dtIni&&dataPedido<=dtFim):
+      (extrairData(pedido)>=dtIni&&extrairData(pedido)<=dtFim);
+    if(!passou)return;
+
+    var sitId=pedido.situacao&&pedido.situacao.id;
+    // Devolvidos e avariados — listar separado
+    if(sitId===724811){devolvidos.push(pedido);return;}
+    if(sitId===609955){avariados.push(pedido);return;}
+
+    totalPedidos++;
+    var itens=pedido.itens||pedido.item||[];
+
+    // Composição de kits — usa item original (antes de desmembrar)
+    itens.forEach(function(item){
+      var cod=extrairSku(item);if(!cod)return;
+      var qtd=parseFloat(item.quantidade||item.qtde||0);
+      var tipoKit=classificarKit(cod);
+      porKit[tipoKit]=(porKit[tipoKit]||0)+qtd;
+    });
+
+    // Métricas por produto unitário
+    itens.forEach(function(item){
+      var cod=extrairSku(item);if(!cod)return;
+      var qtd=parseFloat(item.quantidade||item.qtde||0);
+      var comps=desmembrarKit(cod,qtd);
+      var lista=comps?comps:[{sku:cod,qty:qtd}];
+      lista.forEach(function(c){
+        var cl=classificarSku(c.sku);if(!cl||cl.produto==='?')return;
+        totalUnid+=c.qty;
+        porTipo[cl.produto]=(porTipo[cl.produto]||0)+c.qty;
+        porEstrutura[cl.estrutura]=(porEstrutura[cl.estrutura]||0)+c.qty;
+        if(cl.produto==='Espreguiçadeira'){
+          porAcabamentoEspr[cl.acabamento]=(porAcabamentoEspr[cl.acabamento]||0)+c.qty;
+          var chaveCor=cl.cor;
+          porCorEspr[chaveCor]=(porCorEspr[chaveCor]||0)+c.qty;
+        } else {
+          porAcabamentoMesa[cl.acabamento]=(porAcabamentoMesa[cl.acabamento]||0)+c.qty;
+          porCorMesa[cl.cor]=(porCorMesa[cl.cor]||0)+c.qty;
+        }
+      });
+    });
+  });
+
+  // Resumo
+  var resEl=document.getElementById('metricasResumo');
+  if(resEl)resEl.textContent=totalUnid+' unidades · '+totalPedidos+' pedidos';
+
+  // Renderiza cards
+  var CORES_GRAF=['#0d2b35','#1d6a7a','#2a9d8f','#e9c46a','#f4a261','#e76f51','#a8dadc','#457b9d'];
+  function pctBar(val,total,cor){
+    var p=total>0?Math.round(val/total*100):0;
+    return'<div class="metric-row">'+
+      '<span class="metric-label" title="'+val+'">'+cor+'</span>'+
+      '<div class="metric-bar-wrap"><div class="metric-bar" style="width:'+p+'%;background:'+CORES_GRAF[Object.keys(CORES_GRAF).indexOf(cor)%CORES_GRAF.length]+'"></div></div>'+
+      '<span class="metric-val">'+val+'</span>'+
+      '<span class="metric-pct">'+p+'%</span>'+
+      '</div>';
+  }
+  function cardMetrica(titulo,dados,total){
+    var entries=Object.entries(dados).sort(function(a,b){return b[1]-a[1];});
+    var cores=['#0d2b35','#2a9d8f','#e9c46a','#f4a261','#e76f51','#457b9d','#a8dadc','#e63946'];
+    var rows=entries.map(function(e,i){
+      var p=total>0?Math.round(e[1]/total*100):0;
+      return'<div class="metric-row">'+
+        '<span class="metric-label" title="'+e[0]+'">'+e[0]+'</span>'+
+        '<div class="metric-bar-wrap"><div class="metric-bar" style="width:'+p+'%;background:'+cores[i%cores.length]+'"></div></div>'+
+        '<span class="metric-val">'+e[1]+'</span>'+
+        '<span class="metric-pct">'+p+'%</span>'+
+        '</div>';
+    }).join('');
+    return'<div class="metric-card"><h4>'+titulo+'</h4>'+rows+'</div>';
+  }
+
+  // Card de kits
+  var KIT_LABELS={'unit':'Unitário','kit2':'Kit 2','kit2m':'Kit 2 + Mesa','kit3':'Kit 3','kit4':'Kit 4','kit4m':'Kit 4 + Mesa'};
+  var totalKits=Object.values(porKit).reduce(function(s,v){return s+v;},0);
+  var kitDados={};
+  Object.entries(porKit).forEach(function(e){kitDados[KIT_LABELS[e[0]]||e[0]]=e[1];});
+
+  // Cards de devolvidos/avariados
+  function cardDevolucao(titulo,lista,cor){
+    if(!lista.length)return'';
+    var rows=lista.map(function(p){
+      var itens=(p.itens||p.item||[]).map(function(i){return extrairSku(i);}).filter(Boolean).join(', ');
+      return'<div class="dev-row"><span>'+(p.numero||p.id)+'</span><span style="color:#888;font-size:11px">'+itens+'</span><span style="color:'+cor+'">'+((p.data||'').slice(0,10))+'</span></div>';
+    }).join('');
+    return'<div class="dev-card"><h4 style="color:'+cor+'">'+titulo+' ('+lista.length+')</h4>'+rows+'</div>';
+  }
+
+  var html=
+    '<div class="metric-grid">'+
+    cardMetrica('Tipo de Produto',porTipo,totalUnid)+
+    cardMetrica('Cor da Estrutura',porEstrutura,totalUnid)+
+    cardMetrica('Modelo — Espreguiçadeira',porAcabamentoEspr,porTipo['Espreguiçadeira']||0)+
+    cardMetrica('Modelo — Mesa de Centro',porAcabamentoMesa,porTipo['Mesa de Centro']||0)+
+    cardMetrica('Cor — Espreguiçadeira',porCorEspr,porTipo['Espreguiçadeira']||0)+
+    cardMetrica('Cor — Mesa de Centro',porCorMesa,porTipo['Mesa de Centro']||0)+
+    cardMetrica('Composição de Kits',kitDados,totalKits)+
+    '</div>'+
+    cardDevolucao('Devolvidos',devolvidos,'#d97706')+
+    cardDevolucao('Avariados',avariados,'#dc2626');
+
+  document.getElementById('metricasConteudo').innerHTML=html;
 }
 
 // ─── SORT ─────────────────────────────────────────────────────────────────────
