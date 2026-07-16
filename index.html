@@ -197,11 +197,9 @@ async function sincronizarHora(){
 }
 
 function agoraBrasilia(){
-  // Usa timestamp do servidor + converte para GMT-3
-  var utcNow=Date.now()+_serverTimeOffset;
-  var utcDate=new Date(utcNow);
-  var utc=utcDate.getTime()+utcDate.getTimezoneOffset()*60000;
-  return new Date(utc+(-3)*3600000);
+  // Usa timestamp UTC do servidor e subtrai 3h fixas para GMT-3
+  var utcNow = Date.now() + _serverTimeOffset;
+  return new Date(utcNow - 3 * 3600000);
 }
 function todayStr(){
   var d=agoraBrasilia();
