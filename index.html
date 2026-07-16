@@ -129,6 +129,16 @@ button.primary:hover{background:#6b69e8}
     <input type="number" id="cfgDiasProducao" min="1" max="30"/>
 
     <label style="display:flex;align-items:center;gap:6px">
+      Dias para reposição Fulfillment ML
+      <span class="tooltip-wrap">
+        <span class="tooltip-icon">?</span>
+        <span class="tooltip-box">Prazo total para repor o estoque do Fulfillment: inclui produção + logística de envio ao centro de distribuição do ML. Usado para calcular o estoque mínimo e sugestão de fabricação do canal Full.</span>
+      </span>
+    </label>
+    <input type="number" id="cfgDiasFull" min="1" max="60"/>
+    <div class="hint">Padrão: 13 dias (produção + logística ML).</div>
+
+    <label style="display:flex;align-items:center;gap:6px">
       Base para sugestão de fabricação
       <span class="tooltip-wrap">
         <span class="tooltip-icon">?</span>
@@ -159,12 +169,16 @@ var DEP_FATURAMENTO = 14888413957;
 var DEP_FULFILLMENT = 14888519189;
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":5,"diasProducao":3,"baseSug":"min","dataInicio":""}');
+var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":5,"diasProducao":3,"diasFull":13,"baseSug":"min","dataInicio":""}');
 if (!config.minDias) config.minDias = 5;
 if (!config.diasProducao) config.diasProducao = 3;
+if (!config.diasFull) config.diasFull = 13;
 if (!config.baseSug) config.baseSug = 'min';
 
 var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
+// minimoCustom[sku] = valor manual para Faturamento
+// minimoCustomFull[sku] = valor manual para Fulfillment
+var minimoCustomFull = JSON.parse(localStorage.getItem('esq_min_full') || '{}');
 var dadosBase = [];
 var dados = [];
 var saldosDeposito = {};
@@ -316,39 +330,27 @@ function atualizarColunasDeposito(){
   var mostrarNormal = tableOrigem !== 'fulfillment';
   var mostrarFull   = tableOrigem !== 'normal';
   var filtrado      = tableOrigem !== 'todos';
-
-  // Cabeçalhos
   var thN   = document.getElementById('th_vendasNormal');
   var thF   = document.getElementById('th_vendasFull');
   var thT   = document.getElementById('th_vendasTotal');
-  var thFat = document.getElementById('th_estoqueFat');
-  var thFul = document.getElementById('th_estoqueFull');
-
-  if(thN)   thN.style.display   = (mostrarNormal && !filtrado) ? '' : (filtrado && mostrarNormal ? '' : 'none');
-  if(thF)   thF.style.display   = (mostrarFull   && !filtrado) ? '' : (filtrado && mostrarFull   ? '' : 'none');
-  if(thFat) thFat.style.display = mostrarNormal ? '' : 'none';
-  if(thFul) thFul.style.display = mostrarFull   ? '' : 'none';
-
-  // Quando filtrado: renomeia coluna visível para "Vendas" e esconde Total
+  if(thN) thN.style.display = (!filtrado) ? '' : (mostrarNormal ? '' : 'none');
+  if(thF) thF.style.display = (!filtrado) ? '' : (mostrarFull   ? '' : 'none');
+  if(thT) thT.style.display = filtrado ? 'none' : '';
   if(filtrado){
-    if(thN && mostrarNormal) thN.childNodes[0].textContent = 'Vendas ';
-    if(thF && mostrarFull)   thF.childNodes[0].textContent = 'Vendas ';
-    if(thT) thT.style.display = 'none';
-  } else {
-    if(thN) thN.childNodes[0].textContent = 'Vendas Fat. ';
-    if(thF) thF.childNodes[0].textContent = 'Vendas Full ';
-    if(thT) thT.style.display = '';
+    if(thN&&mostrarNormal)thN.childNodes[0].textContent='Vendas ';
+    if(thF&&mostrarFull)  thF.childNodes[0].textContent='Vendas ';
+  }else{
+    if(thN)thN.childNodes[0].textContent='Vendas Fat. ';
+    if(thF)thF.childNodes[0].textContent='Vendas Full ';
   }
-
-  // Células via CSS
-  var styleId = 'col_visibility_style';
-  var el = document.getElementById(styleId);
-  if(!el){el = document.createElement('style');el.id = styleId;document.head.appendChild(el);}
-  var css = '';
-  if(!mostrarNormal) css += '.col_vendasNormal,.col_estoqueFat{display:none}';
-  if(!mostrarFull)   css += '.col_vendasFull,.col_estoqueFull{display:none}';
-  if(filtrado)       css += '.col_vendasTotal{display:none}';
-  el.textContent = css;
+  var styleId='col_visibility_style';
+  var el=document.getElementById(styleId);
+  if(!el){el=document.createElement('style');el.id=styleId;document.head.appendChild(el);}
+  var css='';
+  if(!mostrarNormal)css+='.col_vendasNormal{display:none}';
+  if(!mostrarFull)  css+='.col_vendasFull{display:none}';
+  if(filtrado)      css+='.col_vendasTotal{display:none}';
+  el.textContent=css;
 }
 
 function setOrigem(which,val){
@@ -450,6 +452,7 @@ function openConfig(){
   document.getElementById('cfgPeriodo').value=config.periodo;
   document.getElementById('cfgMinDias').value=config.minDias;
   document.getElementById('cfgDiasProducao').value=config.diasProducao;
+  document.getElementById('cfgDiasFull').value=config.diasFull||13;
   document.getElementById('cfgBaseSug').value=config.baseSug||'min';
   document.getElementById('cfgDataInicio').value=config.dataInicio||'';
   openModal('modalConfig');
@@ -459,12 +462,12 @@ function saveConfig(){
   config.periodo=novo;
   config.minDias=parseInt(document.getElementById('cfgMinDias').value)||5;
   config.diasProducao=parseInt(document.getElementById('cfgDiasProducao').value)||3;
+  config.diasFull=parseInt(document.getElementById('cfgDiasFull').value)||13;
   config.baseSug=document.getElementById('cfgBaseSug').value||'min';
   config.dataInicio=document.getElementById('cfgDataInicio').value||'';
   localStorage.setItem('esq_cfg',JSON.stringify(config));
-  /// Ao salvar config, reseta mínimos para recalcular automaticamente
-  minimoCustom={};
-  localStorage.setItem('esq_min','{}');
+  minimoCustom={};minimoCustomFull={};
+  localStorage.setItem('esq_min','{}');localStorage.setItem('esq_min_full','{}');
   closeModal('modalConfig');
   if(dadosBase.length)recalcularTabela();
 }
@@ -635,10 +638,9 @@ function renderPainel(){
     '<th class="sortable" onclick="sortBy(&quot;categoria&quot;)">Categoria <span id="srt_categoria"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;vendasNormal&quot;)" style="text-align:right" id="th_vendasNormal">Vendas Fat. <span id="srt_vendasNormal"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;vendasFull&quot;)" style="text-align:right" id="th_vendasFull">Vendas Full <span id="srt_vendasFull"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;vendasTotal&quot;)" style="text-align:right" id="th_vendasTotal">Total <span id="srt_vendasTotal"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;vendasTotal&quot;)" style="text-align:right" id="th_vendasTotal">Vendas <span id="srt_vendasTotal"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;mediaDia&quot;)" style="text-align:right">Méd/dia <span id="srt_mediaDia"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;estoqueFat&quot;)" style="text-align:right" id="th_estoqueFat" title="Estoque Faturamento">Fat. <span id="srt_estoqueFat"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;estoqueFull&quot;)" style="text-align:right" id="th_estoqueFull" title="Estoque Fulfillment ML">Full. <span id="srt_estoqueFull"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;estoque&quot;)" style="text-align:right">Estoque <span id="srt_estoque"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;estoqueMin&quot;)" style="text-align:right">Mínimo <span id="srt_estoqueMin"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;diasAteMin&quot;)">Atinge Mín. <span id="srt_diasAteMin"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;diasAteZero&quot;)">Zera <span id="srt_diasAteZero"></span></th>'+
@@ -845,21 +847,45 @@ function recalcularTabela(){
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var periodo=periodoEmDias(tablePeriodo.ini,tablePeriodo.fim);
 
-  dados=dadosBase.map(function(b){
+  dados=[];
+  dadosBase.forEach(function(b){
     var vt=vm[b.sku]||0,vnorm=vn[b.sku]||0,vful=vf[b.sku]||0;
     var media=vt/periodo;
-    var estoqueMin=minimoCustom[b.sku]!=null?minimoCustom[b.sku]:Math.ceil(media*config.minDias);
-    var diasMin=media>0?Math.floor((b.estoqueFat-estoqueMin)/media):999;
-    var diasZero=media>0?Math.floor(b.estoqueFat/media):999;
-    var status=calcStatus(b.estoqueFat,estoqueMin,diasZero,media);
-    var diasAlvo=config.baseSug==='zero'?diasZero:diasMin;
-    var sugestao=media>0?calcSugestao(diasAlvo):null;
-    return Object.assign({},b,{
-      vendasTotal:vt,vendasNormal:vnorm,vendasFull:vful,mediaDia:media,
-      estoqueMin:estoqueMin,diasAteMin:diasMin,diasAteZero:diasZero,
-      status:status,sugestao:sugestao,
-      sugestaoInicio:sugestao?sugestao.diasAteInicio:999
-    });
+    var mediaNorm=vnorm/periodo, mediaFull=vful/periodo;
+
+    // Linha Faturamento
+    var minFat=minimoCustom[b.sku]!=null?minimoCustom[b.sku]:Math.ceil(mediaNorm*config.minDias);
+    var diasMinFat=mediaNorm>0?Math.floor((b.estoqueFat-minFat)/mediaNorm):999;
+    var diasZeroFat=mediaNorm>0?Math.floor(b.estoqueFat/mediaNorm):999;
+    var statusFat=calcStatus(b.estoqueFat,minFat,diasZeroFat,mediaNorm);
+    var diasAlvoFat=config.baseSug==='zero'?diasZeroFat:diasMinFat;
+    var sugFat=mediaNorm>0?calcSugestao(diasAlvoFat):null;
+    dados.push(Object.assign({},b,{
+      _canal:'fat',
+      vendasTotal:vnorm,vendasNormal:vnorm,vendasFull:0,
+      mediaDia:mediaNorm,estoqueMin:minFat,
+      estoque:b.estoqueFat,
+      diasAteMin:diasMinFat,diasAteZero:diasZeroFat,
+      status:statusFat,sugestao:sugFat,sugestaoInicio:sugFat?sugFat.diasAteInicio:999
+    }));
+
+    // Linha Fulfillment — só se tiver estoque ou vendas full
+    if(b.estoqueFull>0||vful>0){
+      var minFull=minimoCustomFull[b.sku]!=null?minimoCustomFull[b.sku]:Math.ceil(mediaFull*config.diasFull);
+      var diasMinFull=mediaFull>0?Math.floor((b.estoqueFull-minFull)/mediaFull):999;
+      var diasZeroFull=mediaFull>0?Math.floor(b.estoqueFull/mediaFull):999;
+      var statusFull=calcStatus(b.estoqueFull,minFull,diasZeroFull,mediaFull);
+      var diasAlvoFull=config.baseSug==='zero'?diasZeroFull:diasMinFull;
+      var sugFull=mediaFull>0?calcSugestao(diasAlvoFull):null;
+      dados.push(Object.assign({},b,{
+        _canal:'full',
+        vendasTotal:vful,vendasNormal:0,vendasFull:vful,
+        mediaDia:mediaFull,estoqueMin:minFull,
+        estoque:b.estoqueFull,
+        diasAteMin:diasMinFull,diasAteZero:diasZeroFull,
+        status:statusFull,sugestao:sugFull,sugestaoInicio:sugFull?sugFull.diasAteInicio:999
+      }));
+    }
   });
 
   updateCards();
@@ -872,19 +898,20 @@ function recalcularTabela(){
 // ─── CARDS ────────────────────────────────────────────────────────────────────
 function updateCards(){
   var el=function(id){return document.getElementById(id);};
-  if(el('cTotal'))el('cTotal').textContent=dados.length;
+  var dadosFat=dados.filter(function(d){return d._canal==='fat';});
+  var dadosFull=dados.filter(function(d){return d._canal==='full';});
+  if(el('cTotal'))el('cTotal').textContent=dadosFat.length;
   if(el('cCritico'))el('cCritico').textContent=dados.filter(function(d){return d.status==='critico';}).length;
   if(el('cAtencao'))el('cAtencao').textContent=dados.filter(function(d){return d.status==='atencao';}).length;
   if(el('cOk'))el('cOk').textContent=dados.filter(function(d){return d.status==='ok';}).length;
-  var totalFat=dados.reduce(function(s,d){return s+(d.estoqueFat||0);},0);
-  var totalFull=dados.reduce(function(s,d){return s+(d.estoqueFull||0);},0);
+  var totalFat=dadosFat.reduce(function(s,d){return s+(d.estoque||0);},0);
+  var totalFull=dadosFull.reduce(function(s,d){return s+(d.estoque||0);},0);
   if(el('cFat'))el('cFat').textContent=totalFat;
   if(el('cFull'))el('cFull').textContent=totalFull;
-  // Vendas históricas acumuladas
   var vtNorm=Object.values(histVendas.vendas||{}).reduce(function(s,v){return s+v;},0);
   var vtFull=Object.values(histVendas.vendasFull||{}).reduce(function(s,v){return s+v;},0);
   if(el('cVNormal'))el('cVNormal').textContent=vtNorm||'-';
-  if(el('cVFull'))el('cVFull').textContent=vtFull||'--';
+  if(el('cVFull'))el('cVFull').textContent=vtFull||'-';
 }
 
 // ─── DONUT (removido, simplificado) ──────────────────────────────────────────
@@ -905,6 +932,10 @@ function renderChart(){
 
   // Contador de vendas
   var totalVendas=Object.values(vm).reduce(function(s,v){return s+v;},0);
+  var totalNorm=Object.values(vn).reduce(function(s,v){return s+v;},0);
+  var totalFull=Object.values(vf).reduce(function(s,v){return s+v;},0);
+  var pctNorm=totalVendas>0?Math.round(totalNorm/totalVendas*100):0;
+  var pctFull=totalVendas>0?Math.round(totalFull/totalVendas*100):0;
   var labelPeriodo=chartPeriodo.tipo==='hoje'?'hoje ('+String(agoraBrasilia().getHours()).padStart(2,'0')+'h)':
     chartPeriodo.tipo==='1d'?'últimas 24h':
     chartPeriodo.tipo==='7d'?'últimos 7 dias':
@@ -913,8 +944,9 @@ function renderChart(){
     chartPeriodo.tipo==='180d'?'últimos 6 meses':
     chartPeriodo.tipo==='365d'?'último ano':
     fmtDate(chartPeriodo.ini)+' – '+fmtDate(chartPeriodo.fim);
+  var pctTxt=totalVendas>0?' · <span style="color:#16a34a">Fat. '+pctNorm+'%</span> · <span style="color:#f59e0b">Full '+pctFull+'%</span>':'';
   var resumoEl=document.getElementById('chartResumo');
-  if(resumoEl)resumoEl.textContent=totalVendas+' venda'+(totalVendas!==1?'s':'')+(totalVendas===0?'':' · ')+labelPeriodo;
+  if(resumoEl)resumoEl.innerHTML=totalVendas+' venda'+(totalVendas!==1?'s':'')+' · '+labelPeriodo+pctTxt;
 
   if(chartObj)chartObj.destroy();
   var datasets;
@@ -1140,7 +1172,7 @@ function renderMetricas(){
 function sortBy(col){
   if(sortCol===col)sortDir*=-1;
   else{sortCol=col;sortDir=(col==='status'||col==='sku'||col==='categoria')?1:-1;}
-  ['status','sku','categoria','vendasNormal','vendasFull','vendasTotal','mediaDia','estoqueFat','estoqueFull','estoqueMin','diasAteMin','diasAteZero','sugestaoInicio'].forEach(function(c){
+  ['status','sku','categoria','vendasNormal','vendasFull','vendasTotal','mediaDia','estoque','estoqueMin','diasAteMin','diasAteZero','sugestaoInicio'].forEach(function(c){
     var el=document.getElementById('srt_'+c);
     if(el)el.textContent=c===sortCol?(sortDir===1?'▲':'▼'):'';
   });
@@ -1148,23 +1180,27 @@ function sortBy(col){
 }
 
 // ─── EDIÇÃO INLINE DO MÍNIMO ─────────────────────────────────────────────────
-function startEditMin(sku,el){
+function startEditMin(sku,el,canal){
   if(el.querySelector('input'))return;
-  var atual=minimoCustom[sku]!=null?minimoCustom[sku]:Math.ceil((dados.find(function(d){return d.sku===sku;})||{mediaDia:0}).mediaDia*config.minDias);
+  var map=canal==='full'?minimoCustomFull:minimoCustom;
+  var d=dados.find(function(x){return x.sku===sku&&x._canal===canal;});
+  var atual=map[sku]!=null?map[sku]:Math.ceil((d?d.mediaDia:0)*(canal==='full'?config.diasFull:config.minDias));
   var input=document.createElement('input');
   input.type='number';input.value=atual;input.min=0;
   input.onclick=function(e){e.stopPropagation();};
-  input.onblur=function(){commitEditMin(sku,input.value,el);};
+  input.onblur=function(){commitEditMin(sku,input.value,canal);};
   input.onkeydown=function(e){if(e.key==='Enter')input.blur();if(e.key==='Escape'){renderTable();}};
   el.textContent='';el.appendChild(input);
   setTimeout(function(){input.focus();input.select();},10);
 }
-function commitEditMin(sku,val,el){
+function commitEditMin(sku,val,canal){
   var v=parseInt(val);
+  var map=canal==='full'?minimoCustomFull:minimoCustom;
+  var key=canal==='full'?'esq_min_full':'esq_min';
   if(!isNaN(v)&&v>=0){
-    if(v===0)delete minimoCustom[sku];
-    else minimoCustom[sku]=v;
-    localStorage.setItem('esq_min',JSON.stringify(minimoCustom));
+    if(v===0)delete map[sku];
+    else map[sku]=v;
+    localStorage.setItem(key,JSON.stringify(map));
   }
   recalcularTabela();
 }
@@ -1215,23 +1251,28 @@ function renderTable(){
 
   var html='';
   rows.forEach(function(d){
-    var estoqueMinStr=minimoCustom[d.sku]!=null
-      ?'<span style="color:#7c7af8;font-weight:600">'+minimoCustom[d.sku]+'*</span>'
+    var isFull=d._canal==='full';
+    var minCustom=isFull?minimoCustomFull[d.sku]:minimoCustom[d.sku];
+    var estoqueMinStr=minCustom!=null
+      ?'<span style="color:#7c7af8;font-weight:600">'+minCustom+'*</span>'
       :String(d.estoqueMin>0?d.estoqueMin:'-');
     var nomeEsc=d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    var canalTag=isFull
+      ?'<span style="font-size:10px;background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;margin-left:4px">Full</span>'
+      :'<span style="font-size:10px;background:#eff6ff;color:#1d4ed8;padding:1px 5px;border-radius:4px;margin-left:4px">Fat.</span>';
+    var corEstoque=isFull?'#f59e0b':'#1d4ed8';
     html+=
-      '<tr>'+
+      '<tr style="'+(isFull?'background:#fffbf0':'')+'">'+
       '<td>'+badge(d.status)+'</td>'+
-      '<td><span class="tag">'+d.sku+'</span></td>'+
+      '<td><span class="tag">'+d.sku+'</span>'+canalTag+'</td>'+
       '<td style="max-width:200px;cursor:pointer" onclick="toggleNome(this)" title="Clique para expandir"><span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.nome+'</span></td>'+
       '<td style="color:#888;font-size:11px">'+d.categoria+'</td>'+
       '<td style="text-align:right" class="col_vendasNormal"><span style="color:#16a34a;font-weight:600">'+(d.vendasNormal||0)+'</span></td>'+
       '<td style="text-align:right" class="col_vendasFull"><span style="color:#f59e0b;font-weight:600">'+(d.vendasFull||0)+'</span></td>'+
       '<td style="text-align:right;font-weight:600" class="col_vendasTotal">'+d.vendasTotal+'</td>'+
       '<td style="text-align:right">'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'</td>'+
-      '<td style="text-align:right;font-weight:600;color:#1d4ed8" class="col_estoqueFat">'+(d.estoqueFat||0)+'</td>'+
-      '<td style="text-align:right;color:#f59e0b" class="col_estoqueFull">'+(d.estoqueFull||0)+'</td>'+
-      '<td style="text-align:right" class="min-cell" onclick="startEditMin(\''+d.sku+'\',this)" title="Clique para editar">'+estoqueMinStr+'</td>'+
+      '<td style="text-align:right;font-weight:600;color:'+corEstoque+'">'+(d.estoque||0)+'</td>'+
+      '<td style="text-align:right" class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\''+d._canal+'\')" title="Clique para editar">'+estoqueMinStr+'</td>'+
       '<td>'+diasBadge(d.diasAteMin)+'</td>'+
       '<td>'+diasBadge(d.diasAteZero)+'</td>'+
       '<td>'+sugBadge(d.sugestao)+'</td>'+
