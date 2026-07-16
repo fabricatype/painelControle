@@ -244,6 +244,61 @@ app.get('/logout', (req, res) => {
   res.redirect('/');
 });
 
+// Busca detalhes de pedidos no servidor — evita rate limit no browser
+// GET /api/pedidos-detalhes?ids=1,2,3,...
+app.get('/api/pedidos-detalhes', async (req, res) => {
+  let token;
+  try { token = await ensureToken(req); }
+  catch(e) { return res.status(401).json({ error: 'Nao autenticado' }); }
+
+  const ids = (req.query.ids || '').split(',').filter(Boolean);
+  if (!ids.length) return res.json({ data: [] });
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // Busca um pedido com retry em caso de 429
+  function fetchPedido(id, tentativa = 1) {
+    return new Promise((resolve) => {
+      const options = {
+        hostname: 'www.bling.com.br',
+        path: '/Api/v3/pedidos/vendas/' + id,
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
+      };
+      const request = https.request(options, (response) => {
+        let data = '';
+        response.on('data', c => data += c);
+        response.on('end', async () => {
+          if (response.statusCode === 429 && tentativa <= 5) {
+            console.log('[pedidos-detalhes] 429 id='+id+' tentativa='+tentativa);
+            await sleep(1500 * tentativa);
+            resolve(fetchPedido(id, tentativa + 1));
+          } else {
+            try {
+              const json = JSON.parse(data);
+              resolve(json.data || null);
+            } catch(e) { resolve(null); }
+          }
+        });
+      });
+      request.on('error', () => resolve(null));
+      request.end();
+    });
+  }
+
+  // Processa em lotes de 3 com delay de 400ms entre lotes
+  const results = [];
+  for (let i = 0; i < ids.length; i += 3) {
+    if (i > 0) await sleep(400);
+    const lote = ids.slice(i, i + 3);
+    const loteRes = await Promise.all(lote.map(id => fetchPedido(id)));
+    loteRes.forEach(p => { if (p) results.push(p); });
+    console.log('[pedidos-detalhes] '+Math.min(i+3, ids.length)+'/'+ids.length);
+  }
+
+  res.json({ data: results });
+});
+
 // Proxy para a API do Bling
 app.use('/api/bling', async (req, res) => {
   let token;
