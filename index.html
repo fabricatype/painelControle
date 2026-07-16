@@ -516,24 +516,22 @@ async function syncLeve(){
     novosIds.forEach(function(p){if(!idMap[p.id]||p.origem==='fulfillment')idMap[p.id]=p;});
     novosIds=Object.keys(idMap).map(function(k){return idMap[k];});
 
-    // Busca detalhes dos novos pedidos
+    // Busca detalhes dos novos pedidos via servidor
     var novosPedidos=[];
-    for(var i=0;i<novosIds.length;i+=3){
-      if(i>0)await sleep(1000);
-      var lote=novosIds.slice(i,i+3);
-      var res=await Promise.all(lote.map(function(ref){
-        return blingGet('/pedidos/vendas/'+ref.id).then(function(rs){
-          if(rs&&rs.data&&!rs.data.error){
-            var pedido=rs.data;
-            if(!pedido.data)pedido.data=ref.data;
-            var sitId=pedido.situacao&&pedido.situacao.id;
-            pedido._origem=sitId===529911?'fulfillment':'normal';
-            return pedido;
-          }
-          return null;
-        }).catch(function(){return null;});
-      }));
-      res.forEach(function(p){if(p)novosPedidos.push(p);});
+    if(novosIds.length>0){
+      var idDataMapL={};novosIds.forEach(function(r){idDataMapL[r.id]=r.data;});
+      var loteIdsL=novosIds.map(function(r){return r.id;}).join(',');
+      var rsL=await fetch('/api/pedidos-detalhes?ids='+loteIdsL);
+      if(rsL.status!==401){
+        var jsonL=await rsL.json();
+        (jsonL.data||[]).forEach(function(pedido){
+          if(!pedido)return;
+          if(!pedido.data)pedido.data=idDataMapL[pedido.id]||'';
+          var sitId=pedido.situacao&&pedido.situacao.id;
+          pedido._origem=sitId===529911?'fulfillment':'normal';
+          novosPedidos.push(pedido);
+        });
+      }
     }
 
     // Mescla com pedidosBrutos: substitui se ID já existe, adiciona se novo
@@ -786,25 +784,27 @@ async function syncDados(){
     listaIds=Object.keys(idMap).map(function(k){return idMap[k];});
     log('[Pedidos] dedup: '+listaIds.length+' pedidos únicos');
 
-    // Busca detalhes
+    // Busca detalhes via servidor (evita rate limit no browser)
     pedidosBrutos=[];
-    for(var i=0;i<listaIds.length;i+=3){
-      if(i>0)await sleep(1000);
-      var lote=listaIds.slice(i,i+3);
-      var res=await Promise.all(lote.map(function(ref){
-        return blingGet('/pedidos/vendas/'+ref.id).then(function(rs2){
-          if(rs2&&rs2.data&&!rs2.data.error){
-            var pedido=rs2.data;
-            if(!pedido.data)pedido.data=ref.data;
-            var sitId=pedido.situacao&&pedido.situacao.id;
-            pedido._origem=sitId===529911?'fulfillment':'normal';
-            return pedido;
-          }
-          return null;
-        }).catch(function(){return null;});
-      }));
-      res.forEach(function(p){if(p)pedidosBrutos.push(p);});
-      tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando detalhes... '+Math.min(i+3,listaIds.length)+'/'+listaIds.length+'</td></tr>';
+    tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando detalhes dos pedidos no servidor...</td></tr>';
+    var todosIds=listaIds.map(function(r){return r.id;}).join(',');
+    var idDataMap={};listaIds.forEach(function(r){idDataMap[r.id]=r.data;});
+
+    // Divide em lotes de 50 IDs por chamada ao servidor
+    var loteSize=50;
+    for(var li=0;li<listaIds.length;li+=loteSize){
+      var loteIds=listaIds.slice(li,li+loteSize).map(function(r){return r.id;}).join(',');
+      var rs2=await fetch('/api/pedidos-detalhes?ids='+loteIds);
+      if(rs2.status===401){renderLogin();throw new Error('Sessão expirada');}
+      var json2=await rs2.json();
+      (json2.data||[]).forEach(function(pedido){
+        if(!pedido)return;
+        if(!pedido.data)pedido.data=idDataMap[pedido.id]||'';
+        var sitId=pedido.situacao&&pedido.situacao.id;
+        pedido._origem=sitId===529911?'fulfillment':'normal';
+        pedidosBrutos.push(pedido);
+      });
+      tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando detalhes... '+Math.min(li+loteSize,listaIds.length)+'/'+listaIds.length+'</td></tr>';
     }
     log('[Pedidos] com itens: '+pedidosBrutos.length);
 
