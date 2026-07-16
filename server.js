@@ -102,6 +102,11 @@ app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!(sess && Date.now() < sess.tokenExpiry) });
 });
 
+// Hora do servidor em UTC — frontend usa para calcular GMT-3 consistente
+app.get('/api/hora', (req, res) => {
+  res.json({ utc: Date.now() });
+});
+
 // Debug: pedido RAW
 app.get('/debug/pedido/:id', async (req, res) => {
   let token;
