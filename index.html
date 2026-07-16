@@ -179,10 +179,28 @@ function avancarDiasUteis(ini,n){var d=new Date(ini),c=0;while(c<n){d.setDate(d.
 function dateToStr(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function fmtDate(s){if(!s)return'-';var p=s.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s;}
 // ─── DATA/HORA GMT-3 (Brasília) ───────────────────────────────────────────────
+var _serverTimeOffset = 0; // diferença entre relógio do servidor e local em ms
+
+async function sincronizarHora(){
+  try{
+    var t0=Date.now();
+    var r=await fetch('/api/hora');
+    var j=await r.json();
+    var t1=Date.now();
+    // Estima hora do servidor no meio da requisição
+    var serverNow=j.utc+Math.round((t1-t0)/2);
+    _serverTimeOffset=serverNow-t1;
+    log('[Hora] offset servidor: '+_serverTimeOffset+'ms');
+  }catch(e){
+    _serverTimeOffset=0; // fallback: usa relógio local
+  }
+}
+
 function agoraBrasilia(){
-  // Retorna Date ajustado para GMT-3 independente do navegador
-  var agora=new Date();
-  var utc=agora.getTime()+agora.getTimezoneOffset()*60000;
+  // Usa timestamp do servidor + converte para GMT-3
+  var utcNow=Date.now()+_serverTimeOffset;
+  var utcDate=new Date(utcNow);
+  var utc=utcDate.getTime()+utcDate.getTimezoneOffset()*60000;
   return new Date(utc+(-3)*3600000);
 }
 function todayStr(){
@@ -443,6 +461,7 @@ function saveConfig(){
 async function syncLeve(){
   if(!dadosBase.length)return; // só roda se já teve carga completa
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  await sincronizarHora();
   try{
     var hoje=todayStr();
     var dataIni2h=hoursAgoStr(2).slice(0,10); // data de 2h atrás (pode ser ontem perto da meia-noite)
@@ -627,6 +646,7 @@ async function syncDados(){
   var debugBox=document.getElementById('debugBox');if(debugBox)debugBox.textContent='';
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
   log('[Sync] Iniciando...');
+  await sincronizarHora();
   try{
     // Produtos
     var produtos=[],pagina=1;
