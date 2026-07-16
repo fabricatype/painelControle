@@ -1048,8 +1048,11 @@ function renderMetricasPeriodoBtns(){
   var el=document.getElementById('metricasPeriodoBtns');if(!el)return;
   el.innerHTML=opts.map(function(o){
     var ativo=o.id===metricasPeriodo.tipo?' active':'';
-    return'<button class="pbtn'+ativo+'" onclick="setMetricasPeriodo(&quot;'+o.id+'&quot;)">'+o.label+'</button>';
+    return'<button class="pbtn'+ativo+'" data-periodo="'+o.id+'">'+o.label+'</button>';
   }).join('');
+  el.querySelectorAll('button').forEach(function(btn){
+    btn.addEventListener('click',function(){setMetricasPeriodo(this.getAttribute('data-periodo'));});
+  });
 }
 
 function setMetricasPeriodo(tipo){
