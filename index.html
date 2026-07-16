@@ -115,42 +115,56 @@ button.primary:hover{background:#6b69e8}
     </div>
     <input type="number" id="cfgPeriodo" min="1" max="365" placeholder="dias"/>
 
-    <label style="display:flex;align-items:center;gap:6px">
-      Estoque mínimo cobre quantos dias
-      <span class="tooltip-wrap">
-        <span class="tooltip-icon">?</span>
-        <span class="tooltip-box">O estoque mínimo de cada produto é calculado automaticamente como: <strong>média de vendas/dia × nº de dias</strong>. Exemplo: se você vende 2 unidades/dia e define 15 dias, o mínimo será 30 unidades. Edições manuais na tabela sobrescrevem esse valor por produto.</span>
-      </span>
-    </label>
-    <input type="number" id="cfgMinDias" min="1" max="180"/>
-    <div class="hint">Padrão: 5 dias. Ao salvar, recalcula o mínimo de todos os produtos automaticamente.</div>
+    <div style="margin-top:16px;padding:12px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe">
+      <div style="font-size:12px;font-weight:600;color:#1d4ed8;margin-bottom:10px">📦 Faturamento</div>
 
-    <label>Dias úteis de produção (seg–sex, excluindo feriados)</label>
-    <input type="number" id="cfgDiasProducao" min="1" max="30"/>
+      <label style="display:flex;align-items:center;gap:6px">
+        Estoque mínimo cobre quantos dias
+        <span class="tooltip-wrap"><span class="tooltip-icon">?</span>
+        <span class="tooltip-box">Mínimo calculado como: <strong>média Fat./dia × dias</strong>. Edições manuais na tabela sobrescrevem.</span></span>
+      </label>
+      <input type="number" id="cfgMinDias" min="1" max="180"/>
 
-    <label style="display:flex;align-items:center;gap:6px">
-      Dias para reposição Fulfillment ML
-      <span class="tooltip-wrap">
-        <span class="tooltip-icon">?</span>
-        <span class="tooltip-box">Prazo total para repor o estoque do Fulfillment: inclui produção + logística de envio ao centro de distribuição do ML. Usado para calcular o estoque mínimo e sugestão de fabricação do canal Full.</span>
-      </span>
-    </label>
-    <input type="number" id="cfgDiasFull" min="1" max="60"/>
-    <div class="hint">Padrão: 13 dias (produção + logística ML).</div>
+      <label>Dias úteis de produção (seg–sex, excluindo feriados)</label>
+      <input type="number" id="cfgDiasProducao" min="1" max="30"/>
 
-    <label style="display:flex;align-items:center;gap:6px">
-      Base para sugestão de fabricação
-      <span class="tooltip-wrap">
-        <span class="tooltip-icon">?</span>
-        <span class="tooltip-box">Define qual prazo usar para calcular quando iniciar a fabricação: <strong>Atingir mínimo</strong> sugere iniciar antes do estoque cair abaixo do mínimo. <strong>Zerar estoque</strong> sugere iniciar antes de acabar completamente.</span>
-      </span>
-    </label>
-    <select id="cfgBaseSug">
-      <option value="min">Atingir mínimo</option>
-      <option value="zero">Zerar estoque</option>
-    </select>
+      <label style="display:flex;align-items:center;gap:6px">
+        Base para sugestão
+        <span class="tooltip-wrap"><span class="tooltip-icon">?</span>
+        <span class="tooltip-box">Atingir mínimo: sugere iniciar antes do estoque cair abaixo do mínimo. Zerar: sugere antes de acabar completamente.</span></span>
+      </label>
+      <select id="cfgBaseSug">
+        <option value="min">Atingir mínimo</option>
+        <option value="zero">Zerar estoque</option>
+      </select>
+    </div>
 
-    <label>Data início do histórico de vendas</label>
+    <div style="margin-top:12px;padding:12px;background:#fffbf0;border-radius:8px;border:1px solid #fde68a">
+      <div style="font-size:12px;font-weight:600;color:#d97706;margin-bottom:10px">🟡 Fulfillment ML</div>
+
+      <label style="display:flex;align-items:center;gap:6px">
+        Estoque mínimo cobre quantos dias
+        <span class="tooltip-wrap"><span class="tooltip-icon">?</span>
+        <span class="tooltip-box">Mínimo Full calculado como: <strong>média Full/dia × dias</strong>. Deve cobrir o prazo total de reposição (produção + logística).</span></span>
+      </label>
+      <input type="number" id="cfgMinDiasFull" min="1" max="180"/>
+
+      <label>Dias de logística ML (além da produção)</label>
+      <input type="number" id="cfgDiasLogFull" min="0" max="30"/>
+      <div class="hint">Prazo total Full = dias de produção + dias de logística. Ex: 3 + 10 = 13 dias.</div>
+
+      <label style="display:flex;align-items:center;gap:6px">
+        Base para sugestão
+        <span class="tooltip-wrap"><span class="tooltip-icon">?</span>
+        <span class="tooltip-box">Mesma lógica do Faturamento, mas aplicada ao canal Full.</span></span>
+      </label>
+      <select id="cfgBaseSugFull">
+        <option value="min">Atingir mínimo</option>
+        <option value="zero">Zerar estoque</option>
+      </select>
+    </div>
+
+    <label style="margin-top:12px">Data início do histórico de vendas</label>
     <input type="date" id="cfgDataInicio"/>
     <div class="hint">Usado para buscar o histórico completo no primeiro carregamento.</div>
 
@@ -169,11 +183,13 @@ var DEP_FATURAMENTO = 14888413957;
 var DEP_FULFILLMENT = 14888519189;
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":5,"diasProducao":3,"diasFull":13,"baseSug":"min","dataInicio":""}');
+var config = JSON.parse(localStorage.getItem('esq_cfg') || '{"periodo":30,"minDias":5,"diasProducao":3,"minDiasFull":13,"diasLogFull":10,"baseSug":"min","baseSugFull":"min","dataInicio":""}');
 if (!config.minDias) config.minDias = 5;
 if (!config.diasProducao) config.diasProducao = 3;
-if (!config.diasFull) config.diasFull = 13;
+if (!config.minDiasFull) config.minDiasFull = 13;
+if (!config.diasLogFull && config.diasLogFull !== 0) config.diasLogFull = 10;
 if (!config.baseSug) config.baseSug = 'min';
+if (!config.baseSugFull) config.baseSugFull = 'min';
 
 var minimoCustom = JSON.parse(localStorage.getItem('esq_min') || '{}');
 // minimoCustom[sku] = valor manual para Faturamento
@@ -254,13 +270,14 @@ function calcStatus(est,min,diasZ,media){if(media<=0)return'ok';if(est<=min||dia
 
 // Calcula data sugerida para iniciar fabricação
 function calcSugestao(diasAteAlvo){
+  return calcSugestaoComPrazo(diasAteAlvo, config.diasProducao);
+}
+function calcSugestaoComPrazo(diasAteAlvo, prazo){
   if(diasAteAlvo>=999||diasAteAlvo<0)return null;
   var hoje=new Date();hoje.setHours(0,0,0,0);
-  // Dia que precisa estar pronto = hoje + diasAteAlvo
   var diaAlvo=new Date(hoje);diaAlvo.setDate(diaAlvo.getDate()+Math.floor(diasAteAlvo));
-  // Data de início = diaAlvo - diasProducao úteis
   var d=new Date(diaAlvo),c=0;
-  while(c<config.diasProducao){d.setDate(d.getDate()-1);if(isDiaUtil(d))c++;}
+  while(c<prazo){d.setDate(d.getDate()-1);if(isDiaUtil(d))c++;}
   var hoje0=new Date();hoje0.setHours(0,0,0,0);
   var diasAteInicio=Math.round((d-hoje0)/86400000);
   return{dataInicio:d,diasAteInicio:diasAteInicio,diaAlvo:diaAlvo,atrasado:diasAteInicio<=0};
@@ -452,8 +469,10 @@ function openConfig(){
   document.getElementById('cfgPeriodo').value=config.periodo;
   document.getElementById('cfgMinDias').value=config.minDias;
   document.getElementById('cfgDiasProducao').value=config.diasProducao;
-  document.getElementById('cfgDiasFull').value=config.diasFull||13;
+  document.getElementById('cfgMinDiasFull').value=config.minDiasFull||13;
+  document.getElementById('cfgDiasLogFull').value=config.diasLogFull!=null?config.diasLogFull:10;
   document.getElementById('cfgBaseSug').value=config.baseSug||'min';
+  document.getElementById('cfgBaseSugFull').value=config.baseSugFull||'min';
   document.getElementById('cfgDataInicio').value=config.dataInicio||'';
   openModal('modalConfig');
 }
@@ -462,8 +481,10 @@ function saveConfig(){
   config.periodo=novo;
   config.minDias=parseInt(document.getElementById('cfgMinDias').value)||5;
   config.diasProducao=parseInt(document.getElementById('cfgDiasProducao').value)||3;
-  config.diasFull=parseInt(document.getElementById('cfgDiasFull').value)||13;
+  config.minDiasFull=parseInt(document.getElementById('cfgMinDiasFull').value)||13;
+  config.diasLogFull=parseInt(document.getElementById('cfgDiasLogFull').value)||10;
   config.baseSug=document.getElementById('cfgBaseSug').value||'min';
+  config.baseSugFull=document.getElementById('cfgBaseSugFull').value||'min';
   config.dataInicio=document.getElementById('cfgDataInicio').value||'';
   localStorage.setItem('esq_cfg',JSON.stringify(config));
   minimoCustom={};minimoCustomFull={};
@@ -640,8 +661,8 @@ function renderPainel(){
     '<th class="sortable" onclick="sortBy(&quot;vendasFull&quot;)" style="text-align:right" id="th_vendasFull">Vendas Full <span id="srt_vendasFull"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;vendasTotal&quot;)" style="text-align:right" id="th_vendasTotal">Vendas <span id="srt_vendasTotal"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;mediaDia&quot;)" style="text-align:right">Méd/dia <span id="srt_mediaDia"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;estoque&quot;)" style="text-align:right">Estoque <span id="srt_estoque"></span></th>'+
-    '<th class="sortable" onclick="sortBy(&quot;estoqueMin&quot;)" style="text-align:right">Mínimo <span id="srt_estoqueMin"></span></th>'+
+    '<th class="sortable" onclick="sortBy(&quot;estoque&quot;)" style="text-align:right" title="Fat. + Full. = Total">Estoque <span id="srt_estoque"></span></th>'+
+    '<th style="text-align:right" title="Mín. Fat. + Mín. Full. = Total">Mínimo</th>'+
     '<th class="sortable" onclick="sortBy(&quot;diasAteMin&quot;)">Atinge Mín. <span id="srt_diasAteMin"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;diasAteZero&quot;)">Zera <span id="srt_diasAteZero"></span></th>'+
     '<th class="sortable" onclick="sortBy(&quot;sugestaoInicio&quot;)">Iniciar Fabr. <span id="srt_sugestaoInicio"></span></th>'+
@@ -846,46 +867,49 @@ function recalcularTabela(){
   var calc=calcularVendas(skuSet,tablePeriodo.ini,tablePeriodo.fim,tableOrigem,tablePeriodo.tipo);
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var periodo=periodoEmDias(tablePeriodo.ini,tablePeriodo.fim);
+  // Prazo total Full = produção + logística
+  var prazoFull=config.diasProducao+(config.diasLogFull||10);
 
-  dados=[];
-  dadosBase.forEach(function(b){
-    var vt=vm[b.sku]||0,vnorm=vn[b.sku]||0,vful=vf[b.sku]||0;
-    var media=vt/periodo;
-    var mediaNorm=vnorm/periodo, mediaFull=vful/periodo;
+  dados=dadosBase.map(function(b){
+    var vnorm=vn[b.sku]||0, vful=vf[b.sku]||0, vt=vnorm+vful;
+    var mediaNorm=vnorm/periodo, mediaFull=vful/periodo, media=vt/periodo;
 
-    // Linha Faturamento
+    // Mínimos por canal
     var minFat=minimoCustom[b.sku]!=null?minimoCustom[b.sku]:Math.ceil(mediaNorm*config.minDias);
-    var diasMinFat=mediaNorm>0?Math.floor((b.estoqueFat-minFat)/mediaNorm):999;
-    var diasZeroFat=mediaNorm>0?Math.floor(b.estoqueFat/mediaNorm):999;
-    var statusFat=calcStatus(b.estoqueFat,minFat,diasZeroFat,mediaNorm);
-    var diasAlvoFat=config.baseSug==='zero'?diasZeroFat:diasMinFat;
-    var sugFat=mediaNorm>0?calcSugestao(diasAlvoFat):null;
-    dados.push(Object.assign({},b,{
-      _canal:'fat',
-      vendasTotal:vnorm,vendasNormal:vnorm,vendasFull:0,
-      mediaDia:mediaNorm,estoqueMin:minFat,
-      estoque:b.estoqueFat,
-      diasAteMin:diasMinFat,diasAteZero:diasZeroFat,
-      status:statusFat,sugestao:sugFat,sugestaoInicio:sugFat?sugFat.diasAteInicio:999
-    }));
+    var minFull=minimoCustomFull[b.sku]!=null?minimoCustomFull[b.sku]:Math.ceil(mediaFull*config.minDiasFull);
+    var minTotal=minFat+minFull;
 
-    // Linha Fulfillment — só se tiver estoque ou vendas full
-    if(b.estoqueFull>0||vful>0){
-      var minFull=minimoCustomFull[b.sku]!=null?minimoCustomFull[b.sku]:Math.ceil(mediaFull*config.diasFull);
-      var diasMinFull=mediaFull>0?Math.floor((b.estoqueFull-minFull)/mediaFull):999;
-      var diasZeroFull=mediaFull>0?Math.floor(b.estoqueFull/mediaFull):999;
-      var statusFull=calcStatus(b.estoqueFull,minFull,diasZeroFull,mediaFull);
-      var diasAlvoFull=config.baseSug==='zero'?diasZeroFull:diasMinFull;
-      var sugFull=mediaFull>0?calcSugestao(diasAlvoFull):null;
-      dados.push(Object.assign({},b,{
-        _canal:'full',
-        vendasTotal:vful,vendasNormal:0,vendasFull:vful,
-        mediaDia:mediaFull,estoqueMin:minFull,
-        estoque:b.estoqueFull,
-        diasAteMin:diasMinFull,diasAteZero:diasZeroFull,
-        status:statusFull,sugestao:sugFull,sugestaoInicio:sugFull?sugFull.diasAteInicio:999
-      }));
-    }
+    // Estoque total
+    var estFat=b.estoqueFat||0, estFull=b.estoqueFull||0, estTotal=estFat+estFull;
+
+    // Dias baseados no total
+    var diasMin=media>0?Math.floor((estTotal-minTotal)/media):999;
+    var diasZero=media>0?Math.floor(estTotal/media):999;
+    var status=calcStatus(estTotal,minTotal,diasZero,media);
+
+    // Sugestão usa o prazo mais longo entre os dois canais
+    var prazFat=config.diasProducao;
+    var prazFull=prazoFull;
+    var prazoMax=Math.max(prazFat,prazFull);
+    var diasAlvoFat=config.baseSug==='zero'?diasZero:diasMin;
+    var diasAlvoFull=config.baseSugFull==='zero'?diasZero:diasMin;
+    var diasAlvo=Math.min(diasAlvoFat,diasAlvoFull); // usa o mais urgente
+    // Sugestão com o prazo do canal que precisa de mais tempo
+    var sugFat=media>0?calcSugestao(diasAlvoFat):null;
+    var sugFull=media>0?calcSugestaoComPrazo(diasAlvoFull,prazoFull):null;
+    // Exibe a sugestão mais urgente
+    var sugestao=null;
+    if(sugFat&&sugFull){sugestao=sugFat.diasAteInicio<=sugFull.diasAteInicio?sugFat:sugFull;}
+    else{sugestao=sugFat||sugFull;}
+
+    return Object.assign({},b,{
+      vendasTotal:vt,vendasNormal:vnorm,vendasFull:vful,mediaDia:media,
+      estoqueFat:estFat,estoqueFull:estFull,estoque:estTotal,
+      estoqueMin:minTotal,estoqueMinFat:minFat,estoqueMinFull:minFull,
+      diasAteMin:diasMin,diasAteZero:diasZero,
+      status:status,sugestao:sugestao,sugestaoInicio:sugestao?sugestao.diasAteInicio:999,
+      _canal:'total'
+    });
   });
 
   updateCards();
@@ -898,14 +922,12 @@ function recalcularTabela(){
 // ─── CARDS ────────────────────────────────────────────────────────────────────
 function updateCards(){
   var el=function(id){return document.getElementById(id);};
-  var dadosFat=dados.filter(function(d){return d._canal==='fat';});
-  var dadosFull=dados.filter(function(d){return d._canal==='full';});
-  if(el('cTotal'))el('cTotal').textContent=dadosFat.length;
+  if(el('cTotal'))el('cTotal').textContent=dados.length;
   if(el('cCritico'))el('cCritico').textContent=dados.filter(function(d){return d.status==='critico';}).length;
   if(el('cAtencao'))el('cAtencao').textContent=dados.filter(function(d){return d.status==='atencao';}).length;
   if(el('cOk'))el('cOk').textContent=dados.filter(function(d){return d.status==='ok';}).length;
-  var totalFat=dadosFat.reduce(function(s,d){return s+(d.estoque||0);},0);
-  var totalFull=dadosFull.reduce(function(s,d){return s+(d.estoque||0);},0);
+  var totalFat=dados.reduce(function(s,d){return s+(d.estoqueFat||0);},0);
+  var totalFull=dados.reduce(function(s,d){return s+(d.estoqueFull||0);},0);
   if(el('cFat'))el('cFat').textContent=totalFat;
   if(el('cFull'))el('cFull').textContent=totalFull;
   var vtNorm=Object.values(histVendas.vendas||{}).reduce(function(s,v){return s+v;},0);
@@ -1251,28 +1273,32 @@ function renderTable(){
 
   var html='';
   rows.forEach(function(d){
-    var isFull=d._canal==='full';
-    var minCustom=isFull?minimoCustomFull[d.sku]:minimoCustom[d.sku];
-    var estoqueMinStr=minCustom!=null
-      ?'<span style="color:#7c7af8;font-weight:600">'+minCustom+'*</span>'
-      :String(d.estoqueMin>0?d.estoqueMin:'-');
+    var minFatCustom=minimoCustom[d.sku], minFullCustom=minimoCustomFull[d.sku];
+    var minFatStr=minFatCustom!=null?'<span style="color:#7c7af8;font-weight:600">'+minFatCustom+'*</span>':String(d.estoqueMinFat>0?d.estoqueMinFat:'-');
+    var minFullStr=minFullCustom!=null?'<span style="color:#7c7af8;font-weight:600">'+minFullCustom+'*</span>':String(d.estoqueMinFull>0?d.estoqueMinFull:'-');
+    var minTotalStr='<span style="font-size:11px">'+
+      '<span class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\'fat\')" title="Fat: clique para editar" style="color:#1d4ed8;cursor:pointer">'+minFatStr+'</span>'+
+      '<span style="color:#ccc"> + </span>'+
+      '<span class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\'full\')" title="Full: clique para editar" style="color:#d97706;cursor:pointer">'+minFullStr+'</span>'+
+      ' = <strong>'+d.estoqueMin+'</strong></span>';
     var nomeEsc=d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    var canalTag=isFull
-      ?'<span style="font-size:10px;background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;margin-left:4px">Full</span>'
-      :'<span style="font-size:10px;background:#eff6ff;color:#1d4ed8;padding:1px 5px;border-radius:4px;margin-left:4px">Fat.</span>';
-    var corEstoque=isFull?'#f59e0b':'#1d4ed8';
     html+=
-      '<tr style="'+(isFull?'background:#fffbf0':'')+'">'+
+      '<tr>'+
       '<td>'+badge(d.status)+'</td>'+
-      '<td><span class="tag">'+d.sku+'</span>'+canalTag+'</td>'+
+      '<td><span class="tag">'+d.sku+'</span></td>'+
       '<td style="max-width:200px;cursor:pointer" onclick="toggleNome(this)" title="Clique para expandir"><span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.nome+'</span></td>'+
       '<td style="color:#888;font-size:11px">'+d.categoria+'</td>'+
       '<td style="text-align:right" class="col_vendasNormal"><span style="color:#16a34a;font-weight:600">'+(d.vendasNormal||0)+'</span></td>'+
       '<td style="text-align:right" class="col_vendasFull"><span style="color:#f59e0b;font-weight:600">'+(d.vendasFull||0)+'</span></td>'+
       '<td style="text-align:right;font-weight:600" class="col_vendasTotal">'+d.vendasTotal+'</td>'+
       '<td style="text-align:right">'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'</td>'+
-      '<td style="text-align:right;font-weight:600;color:'+corEstoque+'">'+(d.estoque||0)+'</td>'+
-      '<td style="text-align:right" class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\''+d._canal+'\')" title="Clique para editar">'+estoqueMinStr+'</td>'+
+      '<td style="text-align:right;font-size:12px">'+
+        '<span style="color:#1d4ed8;font-weight:600">'+(d.estoqueFat||0)+'</span>'+
+        '<span style="color:#ccc;font-size:10px"> + </span>'+
+        '<span style="color:#f59e0b">'+(d.estoqueFull||0)+'</span>'+
+        '<span style="color:#888;font-size:11px"> = '+d.estoque+'</span>'+
+      '</td>'+
+      '<td style="text-align:right;font-size:11px">'+minTotalStr+'</td>'+
       '<td>'+diasBadge(d.diasAteMin)+'</td>'+
       '<td>'+diasBadge(d.diasAteZero)+'</td>'+
       '<td>'+sugBadge(d.sugestao)+'</td>'+
