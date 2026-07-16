@@ -707,7 +707,7 @@ async function syncDados(){
   log('[Sync] Iniciando no servidor...');
   await sincronizarHora();
 
-  var dataIniBusca=[chartPeriodo.ini,tablePeriodo.ini,config.dataInicio||daysAgoStr(30)].sort()[0];
+  var dataIniBusca=[chartPeriodo.ini,tablePeriodo.ini,metricasPeriodo.ini,config.dataInicio||daysAgoStr(30)].sort()[0];
   var hoje=todayStr();
 
   // Barra de progresso
@@ -728,14 +728,14 @@ async function syncDados(){
   try{
     // Dispara sync no servidor
     setProgress(2,'Iniciando sincronização...');
-    var r=await fetch('/api/sync?dataIni='+dataIniBusca);
+    var r=await fetch('/api/sync?dataIni='+dataIniBusca, {credentials:'include'});
     if(r.status===401){renderLogin();return;}
 
     // Polling de progresso a cada 1.5s
     var resultado=null;
     while(!resultado){
       await new Promise(function(res){setTimeout(res,1500);});
-      var rp=await fetch('/api/sync-status');
+      var rp=await fetch('/api/sync-status', {credentials:'include'});
       if(rp.status===401){renderLogin();return;}
       var prog=await rp.json();
       if(prog.status==='done'){
