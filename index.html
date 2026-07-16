@@ -592,6 +592,7 @@ function renderPainel(){
     '</div>'+
     // ABA ESTOQUE
     '<div id="tab_estoque" class="tab-content active">'+
+    '<div class="cards">'+
     '<div class="card"><div class="num" id="cTotal">-</div><div class="lbl">Produtos</div></div>'+
     '<div class="card critico"><div class="num" id="cCritico">-</div><div class="lbl">Crítico</div></div>'+
     '<div class="card atencao"><div class="num" id="cAtencao">-</div><div class="lbl">Atenção</div></div>'+
@@ -600,7 +601,7 @@ function renderPainel(){
     '<div class="card full"><div class="num" id="cFull">-</div><div class="lbl">Est. Fulfillment ML</div></div>'+
     '<div class="card" style="border-color:#bfdbfe"><div class="num" id="cVNormal" style="color:#1d4ed8">-</div><div class="lbl">Vendas Faturamento <span class="tooltip-wrap"><span class="tooltip-icon">?</span><span class="tooltip-box">Total de vendas acumuladas desde o início do histórico (definido em Configurações).</span></span></div></div>'+
     '<div class="card" style="border-color:#fde68a"><div class="num" id="cVFull" style="color:#f59e0b">-</div><div class="lbl">Vendas Fulfillment <span class="tooltip-wrap"><span class="tooltip-icon">?</span><span class="tooltip-box">Total de vendas Fulfillment acumuladas desde o início do histórico.</span></span></div></div>'+
-    '</div>'+
+    '</div>'+ // fecha cards
     // GRÁFICO
     '<div class="panel">'+
     '<div class="panel-header">'+
@@ -654,6 +655,9 @@ function renderPainel(){
     '</div>'+
     '<div id="metricasConteudo" style="padding:8px 0"><div class="loading">Carregue os dados primeiro</div></div>'+
     '</div>';
+  // Inicializa displays das abas
+  var te=document.getElementById('tab_estoque');if(te)te.style.display='block';
+  var tm=document.getElementById('tab_metricas');if(tm)tm.style.display='none';
 }
 
 function toggleDebug(){var b=document.getElementById('debugBox');if(b)b.style.display=b.style.display==='block'?'none':'block';}
@@ -944,9 +948,13 @@ function renderChart(){
 
 // ─── ABAS ─────────────────────────────────────────────────────────────────────
 function switchTab(tab){
-  document.querySelectorAll('.tab').forEach(function(b){b.classList.toggle('active',b.getAttribute('onclick').includes("'"+tab+"'"));});
-  document.querySelectorAll('.tab-content').forEach(function(el){el.classList.remove('active');});
-  var el=document.getElementById('tab_'+tab);if(el)el.classList.add('active');
+  document.querySelectorAll('.tab').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('onclick').includes("'"+tab+"'"));
+  });
+  ['estoque','metricas'].forEach(function(t){
+    var el=document.getElementById('tab_'+t);
+    if(el){el.style.display=t===tab?'block':'none';el.classList.toggle('active',t===tab);}
+  });
   if(tab==='metricas')renderMetricas();
 }
 
@@ -958,16 +966,16 @@ var SKU_ACABAMENTO= {'1':'Junco','2':'Acquaflex','3':'Tela Sling','4':'Resort'};
 var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5':'Argila','6':'Verde-Oliva','7':'Marrom','8':'Estampada'};
 
 function classificarSku(sku){
-  // SKU: 0{prod}{mat}{estr}{acab}{cor1}{cor2}
-  // ex: 011112 → 0,1,1,1,1,2
+  // SKU: 0{prod}{mat}{estr}{acab}{cor} — 6 dígitos
+  // ex: 011112 → s[0]=0, s[1]=1(Espr), s[2]=1(Aço), s[3]=1(PF), s[4]=1(Junco), s[5]=2(Azul)
   var s=String(sku);
-  if(!s.startsWith('0')||s.length<7)return null;
+  if(!s.startsWith('0')||s.length<6)return null;
   return{
     produto:  SKU_PRODUTO[s[1]]||'?',
     material: SKU_MATERIAL[s[2]]||'?',
     estrutura:SKU_ESTRUTURA[s[3]]||'?',
     acabamento:SKU_ACABAMENTO[s[4]]||'?',
-    cor:      SKU_COR[s[5]+s[6]]||SKU_COR[s[5]]||'?'
+    cor:      SKU_COR[s[5]]||'?'
   };
 }
 
