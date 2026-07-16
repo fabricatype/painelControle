@@ -519,7 +519,7 @@ async function syncLeve(){
     // Busca detalhes dos novos pedidos
     var novosPedidos=[];
     for(var i=0;i<novosIds.length;i+=3){
-      if(i>0)await sleep(500);
+      if(i>0)await sleep(1000);
       var lote=novosIds.slice(i,i+3);
       var res=await Promise.all(lote.map(function(ref){
         return blingGet('/pedidos/vendas/'+ref.id).then(function(rs){
@@ -789,7 +789,7 @@ async function syncDados(){
     // Busca detalhes
     pedidosBrutos=[];
     for(var i=0;i<listaIds.length;i+=3){
-      if(i>0)await sleep(500);
+      if(i>0)await sleep(1000);
       var lote=listaIds.slice(i,i+3);
       var res=await Promise.all(lote.map(function(ref){
         return blingGet('/pedidos/vendas/'+ref.id).then(function(rs2){
@@ -847,11 +847,14 @@ async function syncDados(){
     });
 
     log('[dadosBase] montado: '+dadosBase.length+' produtos');
-    dataInicioBuscada = dataIniBusca; // registra o início do período buscado
+    dataInicioBuscada = dataIniBusca;
     var ls=document.getElementById('lastSync');
     if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
     recalcularTabela();
     renderChart();
+    // Atualiza métricas se aba estiver ativa
+    var tabMet=document.getElementById('tab_metricas');
+    if(tabMet&&tabMet.style.display==='block')renderMetricas();
   }catch(err){
     log('[ERRO] '+err.message+'\n'+(err.stack||''));
     var db=document.getElementById('debugBox');if(db)db.style.display='block';
@@ -1057,7 +1060,16 @@ function renderMetricasPeriodoBtns(){
 
 function setMetricasPeriodo(tipo){
   metricasPeriodo={tipo:tipo,ini:getPeriodoIni(tipo),fim:todayStr()};
-  renderMetricas();
+  // Se precisar rebuscar dados, mostra loading antes do sync
+  var novoIni=metricasPeriodo.ini;
+  if(dataInicioBuscada===null||novoIni<dataInicioBuscada){
+    var el=document.getElementById('metricasConteudo');
+    if(el)el.innerHTML='<div class="loading" style="padding:48px">⏳ Buscando dados do período...</div>';
+    renderMetricasPeriodoBtns();
+    syncDados();
+  } else {
+    renderMetricas();
+  }
 }
 
 function renderMetricas(){
