@@ -867,44 +867,35 @@ function recalcularTabela(){
   var calc=calcularVendas(skuSet,tablePeriodo.ini,tablePeriodo.fim,tableOrigem,tablePeriodo.tipo);
   var vm=calc.vendasMap,vn=calc.vendasNormal,vf=calc.vendasFull;
   var periodo=periodoEmDias(tablePeriodo.ini,tablePeriodo.fim);
-  // Prazo total Full = produção + logística
   var prazoFull=config.diasProducao+(config.diasLogFull||10);
+  var soFat=tableOrigem==='normal', soFull=tableOrigem==='fulfillment';
 
   dados=dadosBase.map(function(b){
-    var vnorm=vn[b.sku]||0, vful=vf[b.sku]||0, vt=vnorm+vful;
-    var mediaNorm=vnorm/periodo, mediaFull=vful/periodo, media=vt/periodo;
+    var vnorm=vn[b.sku]||0, vful=vf[b.sku]||0;
+    var estFat=b.estoqueFat||0, estFull=b.estoqueFull||0;
 
-    // Mínimos por canal
-    var minFat=minimoCustom[b.sku]!=null?minimoCustom[b.sku]:Math.ceil(mediaNorm*config.minDias);
-    var minFull=minimoCustomFull[b.sku]!=null?minimoCustomFull[b.sku]:Math.ceil(mediaFull*config.minDiasFull);
-    var minTotal=minFat+minFull;
+    // Quando filtrado por canal, usa só aquele canal
+    var vendas  = soFat?vnorm : soFull?vful  : vnorm+vful;
+    var estoque = soFat?estFat: soFull?estFull: estFat+estFull;
+    var media   = vendas/periodo;
+    var mediaNorm=vnorm/periodo, mediaFull=vful/periodo;
 
-    // Estoque total
-    var estFat=b.estoqueFat||0, estFull=b.estoqueFull||0, estTotal=estFat+estFull;
+    var minFat=minimoCustom[b.sku]!=null?minimoCustom[b.sku]:Math.ceil((soFull?0:mediaNorm)*config.minDias);
+    var minFull=minimoCustomFull[b.sku]!=null?minimoCustomFull[b.sku]:Math.ceil((soFat?0:mediaFull)*config.minDiasFull);
+    var minTotal=soFat?minFat: soFull?minFull: minFat+minFull;
 
-    // Dias baseados no total
-    var diasMin=media>0?Math.floor((estTotal-minTotal)/media):999;
-    var diasZero=media>0?Math.floor(estTotal/media):999;
-    var status=calcStatus(estTotal,minTotal,diasZero,media);
+    var diasMin=media>0?Math.floor((estoque-minTotal)/media):999;
+    var diasZero=media>0?Math.floor(estoque/media):999;
+    var status=calcStatus(estoque,minTotal,diasZero,media);
 
-    // Sugestão usa o prazo mais longo entre os dois canais
-    var prazFat=config.diasProducao;
-    var prazFull=prazoFull;
-    var prazoMax=Math.max(prazFat,prazFull);
-    var diasAlvoFat=config.baseSug==='zero'?diasZero:diasMin;
-    var diasAlvoFull=config.baseSugFull==='zero'?diasZero:diasMin;
-    var diasAlvo=Math.min(diasAlvoFat,diasAlvoFull); // usa o mais urgente
-    // Sugestão com o prazo do canal que precisa de mais tempo
-    var sugFat=media>0?calcSugestao(diasAlvoFat):null;
-    var sugFull=media>0?calcSugestaoComPrazo(diasAlvoFull,prazoFull):null;
-    // Exibe a sugestão mais urgente
-    var sugestao=null;
-    if(sugFat&&sugFull){sugestao=sugFat.diasAteInicio<=sugFull.diasAteInicio?sugFat:sugFull;}
-    else{sugestao=sugFat||sugFull;}
+    // Sugestão usa prazo do canal mais restritivo
+    var prazo=soFull?prazoFull:soFat?config.diasProducao:Math.max(config.diasProducao,prazoFull);
+    var diasAlvo=(soFull?config.baseSugFull:config.baseSug)==='zero'?diasZero:diasMin;
+    var sugestao=media>0?calcSugestaoComPrazo(diasAlvo,prazo):null;
 
     return Object.assign({},b,{
-      vendasTotal:vt,vendasNormal:vnorm,vendasFull:vful,mediaDia:media,
-      estoqueFat:estFat,estoqueFull:estFull,estoque:estTotal,
+      vendasTotal:vendas,vendasNormal:vnorm,vendasFull:vful,mediaDia:media,
+      estoqueFat:estFat,estoqueFull:estFull,estoque:estoque,
       estoqueMin:minTotal,estoqueMinFat:minFat,estoqueMinFull:minFull,
       diasAteMin:diasMin,diasAteZero:diasZero,
       status:status,sugestao:sugestao,sugestaoInicio:sugestao?sugestao.diasAteInicio:999,
@@ -1273,14 +1264,18 @@ function renderTable(){
 
   var html='';
   rows.forEach(function(d){
+    var soFat=tableOrigem==='normal', soFull=tableOrigem==='fulfillment';
     var minFatCustom=minimoCustom[d.sku], minFullCustom=minimoCustomFull[d.sku];
-    var minFatStr=minFatCustom!=null?'<span style="color:#7c7af8;font-weight:600">'+minFatCustom+'*</span>':String(d.estoqueMinFat>0?d.estoqueMinFat:'-');
-    var minFullStr=minFullCustom!=null?'<span style="color:#7c7af8;font-weight:600">'+minFullCustom+'*</span>':String(d.estoqueMinFull>0?d.estoqueMinFull:'-');
-    var minTotalStr='<span style="font-size:11px">'+
-      '<span class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\'fat\')" title="Fat: clique para editar" style="color:#1d4ed8;cursor:pointer">'+minFatStr+'</span>'+
-      '<span style="color:#ccc"> + </span>'+
-      '<span class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\'full\')" title="Full: clique para editar" style="color:#d97706;cursor:pointer">'+minFullStr+'</span>'+
-      ' = <strong>'+d.estoqueMin+'</strong></span>';
+    var minFatVal=minFatCustom!=null?minFatCustom:d.estoqueMinFat;
+    var minFullVal=minFullCustom!=null?minFullCustom:d.estoqueMinFull;
+    // Tooltip de estoque
+    var estoqueTooltip=(!soFat&&!soFull)?'Fat: '+(d.estoqueFat||0)+' | Full: '+(d.estoqueFull||0)+' | Total: '+d.estoque:'';
+    var estoqueStr=d.estoque>0?d.estoque:'-';
+    // Tooltip de mínimo — mostra detalhamento Fat+Full
+    var minTooltip=(!soFat&&!soFull)?'Fat: '+minFatVal+' | Full: '+minFullVal+' | Total: '+d.estoqueMin:'';
+    var minStr=d.estoqueMin>0?d.estoqueMin:'-';
+    // Mínimo editável — clique abre edição do canal relevante
+    var minCanal=soFull?'full':'fat';
     var nomeEsc=d.nome.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     html+=
       '<tr>'+
@@ -1292,13 +1287,8 @@ function renderTable(){
       '<td style="text-align:right" class="col_vendasFull"><span style="color:#f59e0b;font-weight:600">'+(d.vendasFull||0)+'</span></td>'+
       '<td style="text-align:right;font-weight:600" class="col_vendasTotal">'+d.vendasTotal+'</td>'+
       '<td style="text-align:right">'+(d.mediaDia>0?d.mediaDia.toFixed(2):'-')+'</td>'+
-      '<td style="text-align:right;font-size:12px">'+
-        '<span style="color:#1d4ed8;font-weight:600">'+(d.estoqueFat||0)+'</span>'+
-        '<span style="color:#ccc;font-size:10px"> + </span>'+
-        '<span style="color:#f59e0b">'+(d.estoqueFull||0)+'</span>'+
-        '<span style="color:#888;font-size:11px"> = '+d.estoque+'</span>'+
-      '</td>'+
-      '<td style="text-align:right;font-size:11px">'+minTotalStr+'</td>'+
+      '<td style="text-align:right;font-weight:600" title="'+estoqueTooltip+'">'+estoqueStr+'</td>'+
+      '<td style="text-align:right;cursor:pointer" class="min-cell" onclick="startEditMin(\''+d.sku+'\',this,\''+minCanal+'\')" title="'+(minTooltip||'Clique para editar')+'">'+minStr+'</td>'+
       '<td>'+diasBadge(d.diasAteMin)+'</td>'+
       '<td>'+diasBadge(d.diasAteZero)+'</td>'+
       '<td>'+sugBadge(d.sugestao)+'</td>'+
