@@ -703,114 +703,66 @@ async function blingGet(path, tentativa){
 async function syncDados(){
   var tbody=document.getElementById('tbody');
   if(!tbody)return;
-  tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando produtos...</td></tr>';
   var debugBox=document.getElementById('debugBox');if(debugBox)debugBox.textContent='';
-  function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
-  log('[Sync] Iniciando...');
+  log('[Sync] Iniciando no servidor...');
   await sincronizarHora();
+
+  var dataIniBusca=[chartPeriodo.ini,tablePeriodo.ini,config.dataInicio||daysAgoStr(30)].sort()[0];
+  var hoje=todayStr();
+
+  // Barra de progresso
+  function setProgress(pct,msg){
+    tbody.innerHTML='<tr><td colspan="14"><div style="padding:32px 24px">'+
+      '<div style="font-size:13px;color:#666;margin-bottom:10px">'+msg+'</div>'+
+      '<div style="background:#f0f0f0;border-radius:6px;height:8px;overflow:hidden">'+
+      '<div style="background:#7c7af8;height:100%;width:'+pct+'%;transition:.3s;border-radius:6px"></div>'+
+      '</div><div style="font-size:11px;color:#aaa;margin-top:6px">'+pct+'%</div>'+
+      '</div></td></tr>';
+    // Atualiza loading nas métricas também
+    var mc=document.getElementById('metricasConteudo');
+    if(mc&&mc.innerHTML.includes('Buscando'))
+      mc.innerHTML='<div class="loading" style="padding:48px">'+
+        '⏳ '+msg+' ('+pct+'%)</div>';
+  }
+
   try{
-    // Produtos
-    var produtos=[],pagina=1;
-    while(true){
-      if(pagina>1)await sleep(400);
-      var r=await blingGet('/produtos?pagina='+pagina+'&limite=100&situacao=A');
-      var items=r.data||[];produtos=produtos.concat(items);
-      if(items.length<100)break;pagina++;if(pagina>30)break;
-    }
-    produtos=produtos.filter(function(p){
-      if(!p.codigo||!String(p.codigo).startsWith('0'))return false;
-      var nome=(p.nome||"").toLowerCase();
-      return!nome.includes('kit');
-    });
-    log('[Produtos] filtrados: '+produtos.length);
+    // Dispara sync no servidor
+    setProgress(2,'Iniciando sincronização...');
+    var r=await fetch('/api/sync?dataIni='+dataIniBusca);
+    if(r.status===401){renderLogin();return;}
 
-    // Saldos por depósito
-    tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando saldos por depósito...</td></tr>';
-    saldosDeposito={};
-    var ids=produtos.map(function(p){return p.id;});
-    for(var si=0;si<ids.length;si+=20){
-      if(si>0)await sleep(400);
-      var loteIds=ids.slice(si,si+20);
-      var qs=loteIds.map(function(id){return'idsProdutos[]='+id;}).join('&');
-      var rs=await blingGet('/estoques/saldos?'+qs);
-      (rs.data||[]).forEach(function(item){
-        var pid=item.produto&&item.produto.id;if(!pid)return;
-        var fat=0,full=0;
-        (item.depositos||[]).forEach(function(dep){
-          if(dep.id===DEP_FATURAMENTO)fat=dep.saldoVirtual||0;
-          else if(dep.id===DEP_FULFILLMENT)full=dep.saldoVirtual||0;
-        });
-        saldosDeposito[pid]={fat:fat,full:full};
-      });
-      log('[Saldos] lote '+(si/20+1)+': '+Object.keys(saldosDeposito).length+' produtos com saldo');
-    }
-    log('[Saldos] total: '+Object.keys(saldosDeposito).length);
-
-    // Pedidos — sempre busca o período da tabela para exibição
-    // O cache histórico é usado APENAS para os cards de vendas acumuladas
-    tbody.innerHTML='<tr><td colspan="14" class="loading">Carregando pedidos...</td></tr>';
-    var hoje=todayStr();
-    // Para a tabela/gráfico: usa o maior período configurado entre chart e table
-    var dataIniBusca=[chartPeriodo.ini, tablePeriodo.ini, config.dataInicio||daysAgoStr(30)].sort()[0];
-    log('[Pedidos] buscando de '+dataIniBusca+' ate '+hoje);
-
-    // Situações válidas como venda:
-    // 15 = Em andamento (com NF), 21 = Em digitação (enviado fábrica), 529911 = Fulfillment ML
-    // Excluídos: 12 (Cancelado), 724811 (Devolvido), 609955 (Avariado)
-    var SITS=[
-      {id:15,origem:'normal'},
-      {id:21,origem:'normal'},
-      {id:529911,origem:'fulfillment'}
-    ];
-    var listaIds=[];
-    for(var si2=0;si2<SITS.length;si2++){
-      if(si2>0)await sleep(400);
-      pagina=1;
-      while(true){
-        if(pagina>1)await sleep(400);
-        var rp=await blingGet('/pedidos/vendas?dataInicial='+dataIniBusca+'&dataFinal='+hoje+'&situacao='+SITS[si2].id+'&pagina='+pagina+'&limite=100');
-        var ip=rp.data||[];
-        ip.forEach(function(p){if(p.id)listaIds.push({id:p.id,data:p.data,origem:SITS[si2].origem});});
-        log('[Pedidos] sit'+SITS[si2].id+' pag'+pagina+': '+ip.length+' itens');
-        if(ip.length<100)break;pagina++;if(pagina>20)break;
+    // Polling de progresso a cada 1.5s
+    var resultado=null;
+    while(!resultado){
+      await new Promise(function(res){setTimeout(res,1500);});
+      var rp=await fetch('/api/sync-status');
+      if(rp.status===401){renderLogin();return;}
+      var prog=await rp.json();
+      if(prog.status==='done'){
+        resultado=prog.data;
+      } else if(prog.status==='error'){
+        throw new Error(prog.msg);
+      } else {
+        setProgress(prog.pct||0, prog.msg||'Aguardando...');
       }
     }
-    // Dedup: mesmo pedido pode aparecer em sit15 e sit21 (mesmo ID, fases diferentes)
-    // Fulfillment tem prioridade; entre 15 e 21, mantém qualquer (mesmo pedido)
-    var idMap={};
-    listaIds.forEach(function(p){
-      if(!idMap[p.id]||p.origem==='fulfillment')idMap[p.id]=p;
+
+    // Processa resultado
+    var produtos=resultado.produtos||[];
+    var saldosResp=resultado.saldos||{};
+    pedidosBrutos=resultado.pedidos||[];
+
+    log('[Produtos] '+produtos.length);
+    log('[Pedidos] '+pedidosBrutos.length);
+
+    // Monta saldosDeposito
+    saldosDeposito={};
+    Object.keys(saldosResp).forEach(function(pid){
+      saldosDeposito[pid]=saldosResp[pid];
     });
-    listaIds=Object.keys(idMap).map(function(k){return idMap[k];});
-    log('[Pedidos] dedup: '+listaIds.length+' pedidos únicos');
 
-    // Busca detalhes via servidor (evita rate limit no browser)
-    pedidosBrutos=[];
-    tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando detalhes dos pedidos no servidor...</td></tr>';
-    var todosIds=listaIds.map(function(r){return r.id;}).join(',');
-    var idDataMap={};listaIds.forEach(function(r){idDataMap[r.id]=r.data;});
-
-    // Divide em lotes de 50 IDs por chamada ao servidor
-    var loteSize=50;
-    for(var li=0;li<listaIds.length;li+=loteSize){
-      var loteIds=listaIds.slice(li,li+loteSize).map(function(r){return r.id;}).join(',');
-      var rs2=await fetch('/api/pedidos-detalhes?ids='+loteIds);
-      if(rs2.status===401){renderLogin();throw new Error('Sessão expirada');}
-      var json2=await rs2.json();
-      (json2.data||[]).forEach(function(pedido){
-        if(!pedido)return;
-        if(!pedido.data)pedido.data=idDataMap[pedido.id]||'';
-        var sitId=pedido.situacao&&pedido.situacao.id;
-        pedido._origem=sitId===529911?'fulfillment':'normal';
-        pedidosBrutos.push(pedido);
-      });
-      tbody.innerHTML='<tr><td colspan="14" class="loading">Buscando detalhes... '+Math.min(li+loteSize,listaIds.length)+'/'+listaIds.length+'</td></tr>';
-    }
-    log('[Pedidos] com itens: '+pedidosBrutos.length);
-
-    // Atualiza cache histórico para os cards de vendas acumuladas
+    // Cache histórico
     var skuSetHist={};produtos.forEach(function(p){skuSetHist[String(p.codigo)]=true;});
-    // Reseta e reconstrói do zero com os pedidos buscados
     histVendas.vendas={};histVendas.vendasFull={};
     pedidosBrutos.forEach(function(pedido){
       var itens=pedido.itens||pedido.item||[];
@@ -821,11 +773,8 @@ async function syncDados(){
         var lista=comps?comps:[{sku:codigo,qty:qtdItem}];
         lista.forEach(function(c){
           if(!skuSetHist[c.sku])return;
-          if(pedido._origem==='fulfillment'){
-            histVendas.vendasFull[c.sku]=(histVendas.vendasFull[c.sku]||0)+c.qty;
-          }else{
-            histVendas.vendas[c.sku]=(histVendas.vendas[c.sku]||0)+c.qty;
-          }
+          if(pedido._origem==='fulfillment') histVendas.vendasFull[c.sku]=(histVendas.vendasFull[c.sku]||0)+c.qty;
+          else histVendas.vendas[c.sku]=(histVendas.vendas[c.sku]||0)+c.qty;
         });
       });
     });
@@ -833,33 +782,31 @@ async function syncDados(){
     try{localStorage.setItem('esq_hist',JSON.stringify(histVendas));}catch(e){}
 
     // dadosBase
-    var categorias={};
     dadosBase=produtos.map(function(p){
       var sku=String(p.codigo);
       var estoque=p.estoque&&p.estoque.saldoVirtualTotal!=null?p.estoque.saldoVirtualTotal:0;
       var depSaldo=saldosDeposito[p.id]||{};
       var estoqueFat=depSaldo.fat!=null?depSaldo.fat:estoque;
       var estoqueFull2=depSaldo.full||0;
-      var nl=(p.nome||"").toLowerCase();
+      var nl=(p.nome||'').toLowerCase();
       var cat=nl.includes('espreguiçadeira')||nl.includes('espreguicadeira')?'Espreguiçadeira':nl.includes('mesa')?'Mesa de Centro':'Outros';
-      categorias[cat]=true;
       return{id:p.id,sku:sku,nome:p.nome||sku,categoria:cat,estoque:estoque,estoqueFat:estoqueFat,estoqueFull:estoqueFull2,customMin:false};
     });
 
     log('[dadosBase] montado: '+dadosBase.length+' produtos');
-    dataInicioBuscada = dataIniBusca;
+    dataInicioBuscada=dataIniBusca;
     var ls=document.getElementById('lastSync');
     if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
     recalcularTabela();
     renderChart();
-    // Atualiza métricas se aba estiver ativa
     var tabMet=document.getElementById('tab_metricas');
     if(tabMet&&tabMet.style.display==='block')renderMetricas();
+
   }catch(err){
-    log('[ERRO] '+err.message+'\n'+(err.stack||''));
+    log('[ERRO] '+err.message);
     var db=document.getElementById('debugBox');if(db)db.style.display='block';
     var tb=document.getElementById('tbody');
-    if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">❌ Erro: '+err.message+' — Veja o Debug no topo para detalhes.</td></tr>';
+    if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">❌ Erro: '+err.message+'</td></tr>';
   }
 }
 
