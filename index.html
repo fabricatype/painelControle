@@ -733,6 +733,7 @@ async function syncDados(){
 
     // Polling de progresso a cada 1.5s
     var resultado=null;
+    var tentativasIdle=0;
     while(!resultado){
       await new Promise(function(res){setTimeout(res,1500);});
       var rp=await fetch('/api/sync-status', {credentials:'include'});
@@ -742,6 +743,11 @@ async function syncDados(){
         resultado=prog.data;
       } else if(prog.status==='error'){
         throw new Error(prog.msg);
+      } else if(prog.status==='idle'){
+        // Sync terminou muito rápido antes do primeiro poll — busca resultado direto
+        tentativasIdle++;
+        if(tentativasIdle>2)throw new Error('Sync não iniciado ou falhou silenciosamente');
+        log('[Sync] status idle — aguardando...');
       } else {
         setProgress(prog.pct||0, prog.msg||'Aguardando...');
       }
@@ -958,7 +964,36 @@ var SKU_PRODUTO   = {'1':'Espreguiçadeira','2':'Mesa de Centro'};
 var SKU_MATERIAL  = {'1':'Aço/Ferro','2':'Alumínio'};
 var SKU_ESTRUTURA = {'1':'Preto Fosco','2':'Champagne'};
 var SKU_ACABAMENTO= {'1':'Junco','2':'Acquaflex','3':'Tela Sling','4':'Resort'};
-var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5':'Argila','6':'Verde-Oliva','7':'Marrom','8':'Estampada'};
+var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5':'Argila','6':'Verde-Oliva','7':'Marrom'};
+
+// Combinações fixas por modelo (todas as possíveis, incluindo sem venda)
+var COMBINACOES = (function(){
+  var produtos = ['Espreguiçadeira','Mesa de Centro'];
+  var modelos  = [
+    {id:'2',nome:'Acquaflex', cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']},
+    {id:'1',nome:'Junco',     cores:['Preto','Azul Marinho','Fendi','Tabaco','Argila']},
+    {id:'3',nome:'Tela Sling',cores:['Preto','Azul Marinho','Marrom','Bege']},
+    {id:'4',nome:'Resort',    cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']}
+  ];
+  var estruturas = [{id:'1',nome:'Preto Fosco'},{id:'2',nome:'Champagne'}];
+  // SKU: 0{prod}{mat}{estr}{acab}{cor}
+  // prod: 1=Espr, 2=Mesa; mat: sempre 1(Aço); estr: 1=PF,2=Champ; acab: id do modelo; cor: por nome
+  var COR_ID = {'Preto':'1','Azul Marinho':'2','Tabaco':'3','Fendi':'4','Argila':'5','Verde-Oliva':'6','Marrom':'7','Bege':null};
+  var PROD_ID = {'Espreguiçadeira':'1','Mesa de Centro':'2'};
+  var rows = [];
+  produtos.forEach(function(prod){
+    modelos.forEach(function(mod){
+      estruturas.forEach(function(est){
+        mod.cores.forEach(function(cor){
+          var corId = COR_ID[cor];
+          var sku = corId ? '0'+PROD_ID[prod]+'1'+est.id+mod.id+corId : null;
+          rows.push({produto:prod, modelo:mod.nome, estrutura:est.nome, cor:cor, sku:sku});
+        });
+      });
+    });
+  });
+  return rows;
+})();
 
 function classificarSku(sku){
   // SKU: 0{prod}{mat}{estr}{acab}{cor} — 6 dígitos
@@ -1127,6 +1162,91 @@ function renderMetricas(){
     return'<div class="dev-card"><h4 style="color:'+cor+'">'+titulo+' ('+lista.length+')</h4>'+rows+'</div>';
   }
 
+  // Monta mapa de vendas por SKU unitário para cruzar com COMBINACOES
+  var vendasPorSku={};
+  pedidosBrutos.forEach(function(pedido){
+    var dataPedido=(pedido.data||'').slice(0,10);
+    var passou=compararSoData?(dataPedido>=dtIni&&dataPedido<=dtFim):
+      (extrairData(pedido)>=dtIni&&extrairData(pedido)<=dtFim);
+    if(!passou)return;
+    var sitId=pedido.situacao&&pedido.situacao.id;
+    if(sitId===724811||sitId===609955)return;
+    var itens=pedido.itens||pedido.item||[];
+    itens.forEach(function(item){
+      var cod=extrairSku(item);if(!cod)return;
+      var qtd=parseFloat(item.quantidade||item.qtde||0);
+      var comps=desmembrarKit(cod,qtd);
+      var lista=comps?comps:[{sku:cod,qty:qtd}];
+      lista.forEach(function(c){
+        if(!c.sku.startsWith('0'))return;
+        vendasPorSku[c.sku]=(vendasPorSku[c.sku]||0)+c.qty;
+      });
+    });
+  });
+
+  // Label do período
+  var meses=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  function labelMes(str){var d=new Date(str+'T12:00:00');return meses[d.getMonth()]+'/'+String(d.getFullYear()).slice(2);}
+  var periodoLabel = metricasPeriodo.tipo==='hoje'?'Hoje':
+    metricasPeriodo.tipo==='1d'?'Últimas 24h':
+    labelMes(metricasPeriodo.ini)+(metricasPeriodo.ini.slice(0,7)!==metricasPeriodo.fim.slice(0,7)?'-'+labelMes(metricasPeriodo.fim):'');
+
+  // Tabela detalhada por combinação
+  function renderTabelaDetalhada(){
+    var html='<div style="padding:0 24px 24px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'+
+      '<h4 style="font-size:13px;font-weight:600;color:#444">📋 Vendas por Combinação</h4>'+
+      '<button onclick="exportarCSV()" style="font-size:12px;padding:5px 14px;background:#0d2b35;color:#fff;border:none;border-radius:7px;cursor:pointer">⬇ Exportar CSV</button>'+
+      '</div>'+
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;background:#fff;border-radius:10px;border:1px solid #e5e5e5;overflow:hidden">'+
+      '<thead><tr style="background:#fafafa">'+
+      '<th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">Produto</th>'+
+      '<th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">Modelo</th>'+
+      '<th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">Cor Estrutura</th>'+
+      '<th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">Cor Filamento</th>'+
+      '<th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">SKU</th>'+
+      '<th style="padding:8px 12px;text-align:right;border-bottom:1px solid #e5e5e5;color:#666;font-weight:500">'+periodoLabel+'</th>'+
+      '</tr></thead><tbody>';
+
+    var ultProd='',ultMod='',ultEstr='';
+    COMBINACOES.forEach(function(c){
+      var qtd=c.sku?(vendasPorSku[c.sku]||0):0;
+      var separador='';
+      if(c.produto!==ultProd){separador='border-top:2px solid #e5e5e5;';ultProd=c.produto;ultMod='';ultEstr='';}
+      else if(c.modelo!==ultMod){separador='border-top:1px solid #d0d0d0;';ultMod=c.modelo;ultEstr='';}
+      else if(c.estrutura!==ultEstr){separador='border-top:1px dashed #e5e5e5;';ultEstr=c.estrutura;}
+      var semVenda=qtd===0;
+      var bgRow=semVenda?'background:#fafafa;':'';
+      var corQtd=semVenda?'color:#ccc':'color:#0d2b35;font-weight:600';
+      html+='<tr style="'+bgRow+separador+'">'+
+        '<td style="padding:6px 12px;'+(c.produto!==(COMBINACOES[COMBINACOES.indexOf(c)-1]||{}).produto?'':'color:transparent;')+'">'+c.produto+'</td>'+
+        '<td style="padding:6px 12px;color:#444">'+c.modelo+'</td>'+
+        '<td style="padding:6px 12px;color:#666">'+c.estrutura+'</td>'+
+        '<td style="padding:6px 12px;color:#444">'+c.cor+(c.sku?'':'<span style="font-size:10px;color:#aaa;margin-left:4px">(sem SKU)</span>')+'</td>'+
+        '<td style="padding:6px 12px;color:#aaa;font-size:11px;font-family:monospace">'+(c.sku||'-')+'</td>'+
+        '<td style="padding:6px 12px;text-align:right;'+corQtd+'">'+(semVenda?'-':qtd)+'</td>'+
+        '</tr>';
+    });
+
+    html+='</tbody></table></div></div>';
+    return html;
+  }
+
+  // Exportação CSV
+  window.exportarCSV=function(){
+    var linhas=[['Produto','Modelo','Cor Estrutura','Cor Filamento','SKU','Período','Qtd Vendas']];
+    COMBINACOES.forEach(function(c){
+      var qtd=c.sku?(vendasPorSku[c.sku]||0):0;
+      linhas.push([c.produto,c.modelo,c.estrutura,c.cor,c.sku||'',periodoLabel,qtd]);
+    });
+    var csv=linhas.map(function(r){return r.map(function(v){return'"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+    var blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='metricas-typedecor-'+periodoLabel.replace(/\//g,'-')+'.csv';
+    a.click();
+  };
+
   var html=
     '<div class="metric-grid">'+
     cardMetrica('Tipo de Produto',porTipo,totalUnid)+
@@ -1137,6 +1257,7 @@ function renderMetricas(){
     cardMetrica('Cor — Mesa de Centro',porCorMesa,porTipo['Mesa de Centro']||0)+
     cardMetrica('Composição de Kits',kitDados,totalKits)+
     '</div>'+
+    renderTabelaDetalhada()+
     cardDevolucao('Devolvidos',devolvidos,'#d97706')+
     cardDevolucao('Avariados',avariados,'#dc2626');
 
