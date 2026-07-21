@@ -199,7 +199,8 @@ var dadosBase = [];
 var dados = [];
 var saldosDeposito = {};
 var pedidosBrutos = [];
-var dataInicioBuscada = null; // data de início da última busca feita
+var dataInicioBuscada = null;
+var _syncEmAndamento = false; // lock para impedir syncs simultâneos
 var histVendas = JSON.parse(localStorage.getItem('esq_hist') || '{"lastDate":"","vendas":{},"vendasFull":{}}');
 var chartObj = null, donutObj = null;
 var sortCol = 'status', sortDir = 1;
@@ -496,7 +497,9 @@ function saveConfig(){
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 // ─── SYNC LEVE (automático a cada 10 min) ────────────────────────────────────
 async function syncLeve(){
-  if(!dadosBase.length)return; // só roda se já teve carga completa
+  if(!dadosBase.length)return;
+  if(_syncEmAndamento){log('[SyncLeve] sync em andamento, pulando');return;}
+  _syncEmAndamento=true; // só roda se já teve carga completa
   function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
   await sincronizarHora();
   try{
@@ -573,8 +576,10 @@ async function syncLeve(){
     var ls=document.getElementById('lastSync');
     if(ls)ls.textContent='Atualizado '+new Date().toLocaleTimeString('pt-BR');
     log('[SyncLeve] OK — '+novosPedidos.length+' pedidos atualizados');
+    _syncEmAndamento=false;
   }catch(e){
     log('[SyncLeve] Erro: '+e.message);
+    _syncEmAndamento=false;
   }
 }
 
@@ -701,6 +706,8 @@ async function blingGet(path, tentativa){
 
 // ─── SYNC ─────────────────────────────────────────────────────────────────────
 async function syncDados(){
+  if(_syncEmAndamento){log('[Sync] já em andamento, ignorando');return;}
+  _syncEmAndamento=true;
   var tbody=document.getElementById('tbody');
   if(!tbody)return;
   var debugBox=document.getElementById('debugBox');if(debugBox)debugBox.textContent='';
@@ -744,10 +751,10 @@ async function syncDados(){
       } else if(prog.status==='error'){
         throw new Error(prog.msg);
       } else if(prog.status==='idle'){
-        // Sync terminou muito rápido antes do primeiro poll — busca resultado direto
         tentativasIdle++;
-        if(tentativasIdle>2)throw new Error('Sync não iniciado ou falhou silenciosamente');
-        log('[Sync] status idle — aguardando...');
+        if(tentativasIdle>5)throw new Error('Sync não respondeu após várias tentativas — tente Atualizar novamente');
+        log('[Sync] status idle ('+tentativasIdle+'/5)...');
+        setProgress(5,'Aguardando servidor iniciar...');
       } else {
         setProgress(prog.pct||0, prog.msg||'Aguardando...');
       }
@@ -807,9 +814,10 @@ async function syncDados(){
     renderChart();
     var tabMet=document.getElementById('tab_metricas');
     if(tabMet&&tabMet.style.display==='block')renderMetricas();
-
+    _syncEmAndamento=false;
   }catch(err){
     log('[ERRO] '+err.message);
+    _syncEmAndamento=false;
     var db=document.getElementById('debugBox');if(db)db.style.display='block';
     var tb=document.getElementById('tbody');
     if(tb)tb.innerHTML='<tr><td colspan="14" class="empty">❌ Erro: '+err.message+'</td></tr>';
