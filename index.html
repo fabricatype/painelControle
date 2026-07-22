@@ -733,34 +733,22 @@ async function syncDados(){
   }
 
   try{
-    // Dispara sync no servidor
-    setProgress(2,'Iniciando sincronização...');
-    var r=await fetch('/api/sync?dataIni='+dataIniBusca, {credentials:'include'});
+    // Sync síncrono — servidor processa tudo e responde direto
+    setProgress(5,'Sincronizando com o servidor...');
+    var controller=new AbortController();
+    var timeoutId=setTimeout(function(){controller.abort();},300000); // 5 min timeout
+    var r=await fetch('/api/sync?dataIni='+dataIniBusca, {
+      credentials:'include',
+      signal:controller.signal
+    });
+    clearTimeout(timeoutId);
     if(r.status===401){renderLogin();return;}
+    if(!r.ok){throw new Error('Servidor retornou erro '+r.status);}
+    setProgress(90,'Processando dados...');
+    var resultado=await r.json();
+    if(resultado.error){throw new Error(resultado.error);}
+    if(!resultado.produtos){throw new Error('Resposta inválida do servidor');}
 
-    // Polling de progresso a cada 1.5s
-    var resultado=null;
-    var tentativasIdle=0;
-    while(!resultado){
-      await new Promise(function(res){setTimeout(res,1500);});
-      var rp=await fetch('/api/sync-status', {credentials:'include'});
-      if(rp.status===401){renderLogin();return;}
-      var prog=await rp.json();
-      if(prog.status==='done'){
-        resultado=prog.data;
-      } else if(prog.status==='error'){
-        throw new Error(prog.msg);
-      } else if(prog.status==='idle'){
-        tentativasIdle++;
-        if(tentativasIdle>5)throw new Error('Sync não respondeu após várias tentativas — tente Atualizar novamente');
-        log('[Sync] status idle ('+tentativasIdle+'/5)...');
-        setProgress(5,'Aguardando servidor iniciar...');
-      } else {
-        setProgress(prog.pct||0, prog.msg||'Aguardando...');
-      }
-    }
-
-    // Processa resultado
     var produtos=resultado.produtos||[];
     var saldosResp=resultado.saldos||{};
     pedidosBrutos=resultado.pedidos||[];
@@ -1243,11 +1231,19 @@ function renderMetricas(){
   // Exportação CSV
   window.exportarCSV=function(){
     var linhas=[['Produto','Modelo','Cor Estrutura','Cor Filamento','SKU','Período','Qtd Vendas']];
+    var ultProdMod='';
     COMBINACOES.forEach(function(c){
       var qtd=c.sku?(vendasPorSku[c.sku]||0):0;
+      // Linha em branco entre grupos de modelo (igual à planilha de referência)
+      var prodMod=c.produto+'|'+c.modelo;
+      if(ultProdMod!=='' && prodMod!==ultProdMod) linhas.push(['','','','','','','']);
+      ultProdMod=prodMod;
       linhas.push([c.produto,c.modelo,c.estrutura,c.cor,c.sku||'',periodoLabel,qtd]);
     });
-    var csv=linhas.map(function(r){return r.map(function(v){return'"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+    // CRLF para compatibilidade com Excel no Windows
+    var csv=linhas.map(function(r){
+      return r.map(function(v){return'"'+String(v).replace(/"/g,'""')+'"';}).join(';');
+    }).join('\r\n');
     var blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
     var a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
