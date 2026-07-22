@@ -965,26 +965,32 @@ var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5'
 // Combinações fixas por modelo (todas as possíveis, incluindo sem venda)
 var COMBINACOES = (function(){
   var produtos = ['Espreguiçadeira','Mesa de Centro'];
-  var modelos  = [
-    {id:'2',nome:'Acquaflex', cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']},
-    {id:'1',nome:'Junco',     cores:['Preto','Azul Marinho','Fendi','Tabaco','Argila']},
-    {id:'3',nome:'Tela Sling',cores:['Preto','Azul Marinho','Marrom','Bege']},
-    {id:'4',nome:'Resort',    cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']}
-  ];
-  var estruturas = [{id:'1',nome:'Preto Fosco'},{id:'2',nome:'Champagne'}];
-  // SKU: 0{prod}{mat}{estr}{acab}{cor}
-  // prod: 1=Espr, 2=Mesa; mat: sempre 1(Aço); estr: 1=PF,2=Champ; acab: id do modelo; cor: por nome
-  var COR_ID = {'Preto':'1','Azul Marinho':'2','Tabaco':'3','Fendi':'4','Argila':'5','Verde-Oliva':'6','Marrom':'7','Bege':null};
   var PROD_ID = {'Espreguiçadeira':'1','Mesa de Centro':'2'};
+  var COR_ID  = {'Preto':'1','Azul Marinho':'2','Tabaco':'3','Fendi':'4','Argila':'5','Verde-Oliva':'6','Marrom':'7','Bege':null};
+
+  // Combinações por modelo e estrutura — regras exatas confirmadas
+  var MATRIX = [
+    // Acquaflex: PF sem Marrom; Champ com Marrom
+    {mod:'2',nome:'Acquaflex', est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Fendi','Verde-Oliva']},
+    {mod:'2',nome:'Acquaflex', est:'2',estNome:'Champagne',   cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']},
+    // Junco: PF com todas; Champ só Fendi
+    {mod:'1',nome:'Junco',     est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Fendi','Tabaco','Argila']},
+    {mod:'1',nome:'Junco',     est:'2',estNome:'Champagne',   cores:['Fendi']},
+    // Sling: PF sem Marrom; Champ sem Azul
+    {mod:'3',nome:'Tela Sling',est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Bege']},
+    {mod:'3',nome:'Tela Sling',est:'2',estNome:'Champagne',   cores:['Preto','Bege','Marrom']},
+    // Resort: mesmo padrão da Acquaflex
+    {mod:'4',nome:'Resort',    est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Fendi','Verde-Oliva']},
+    {mod:'4',nome:'Resort',    est:'2',estNome:'Champagne',   cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']}
+  ];
+
   var rows = [];
   produtos.forEach(function(prod){
-    modelos.forEach(function(mod){
-      estruturas.forEach(function(est){
-        mod.cores.forEach(function(cor){
-          var corId = COR_ID[cor];
-          var sku = corId ? '0'+PROD_ID[prod]+'1'+est.id+mod.id+corId : null;
-          rows.push({produto:prod, modelo:mod.nome, estrutura:est.nome, cor:cor, sku:sku});
-        });
+    MATRIX.forEach(function(m){
+      m.cores.forEach(function(cor){
+        var corId = COR_ID[cor];
+        var sku = corId ? '0'+PROD_ID[prod]+'1'+m.est+m.mod+corId : null;
+        rows.push({produto:prod, modelo:m.nome, estrutura:m.estNome, cor:cor, sku:sku});
       });
     });
   });
@@ -1024,21 +1030,50 @@ var metricasPeriodo = {tipo:'30d', ini:daysAgoStr(30), fim:todayStr()};
 function renderMetricasPeriodoBtns(){
   var opts=[
     {id:'hoje',label:'Hoje'},{id:'1d',label:'24h'},{id:'7d',label:'7d'},
-    {id:'30d',label:'1m'},{id:'60d',label:'2m'},{id:'180d',label:'6m'},{id:'365d',label:'1a'}
+    {id:'30d',label:'1m'},{id:'60d',label:'2m'},{id:'180d',label:'6m'},{id:'365d',label:'1a'},
+    {id:'custom',label:'Personalizado'}
   ];
   var el=document.getElementById('metricasPeriodoBtns');if(!el)return;
-  el.innerHTML=opts.map(function(o){
-    var ativo=o.id===metricasPeriodo.tipo?' active':'';
-    return'<button class="pbtn'+ativo+'" data-periodo="'+o.id+'">'+o.label+'</button>';
-  }).join('');
-  el.querySelectorAll('button').forEach(function(btn){
-    btn.addEventListener('click',function(){setMetricasPeriodo(this.getAttribute('data-periodo'));});
+  var isCustom=metricasPeriodo.tipo==='custom';
+  el.innerHTML=
+    opts.map(function(o){
+      var ativo=o.id===metricasPeriodo.tipo?' active':'';
+      return'<button class="pbtn'+ativo+'" data-periodo="'+o.id+'">'+o.label+'</button>';
+    }).join('')+
+    '<span style="display:'+(isCustom?'flex':'none')+';align-items:center;gap:4px;margin-left:4px" id="metricasCustomRange">'+
+    '<input type="date" id="metricasCustomDe" value="'+metricasPeriodo.ini+'" style="padding:4px 8px;font-size:12px;border:1px solid #e5e5e5;border-radius:6px"/>'+
+    '<span style="color:#aaa;font-size:12px">a</span>'+
+    '<input type="date" id="metricasCustomAte" value="'+metricasPeriodo.fim+'" style="padding:4px 8px;font-size:12px;border:1px solid #e5e5e5;border-radius:6px"/>'+
+    '<button class="pbtn primary" id="metricasCustomAplicar" style="padding:4px 10px">Aplicar</button>'+
+    '</span>';
+
+  el.querySelectorAll('button[data-periodo]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var tipo=this.getAttribute('data-periodo');
+      if(tipo==='custom'){
+        metricasPeriodo.tipo='custom';
+        renderMetricasPeriodoBtns();
+      } else {
+        setMetricasPeriodo(tipo);
+      }
+    });
   });
+  var apBtn=document.getElementById('metricasCustomAplicar');
+  if(apBtn){
+    apBtn.addEventListener('click',function(){
+      var de=document.getElementById('metricasCustomDe').value;
+      var ate=document.getElementById('metricasCustomAte').value;
+      if(de&&ate){metricasPeriodo={tipo:'custom',ini:de,fim:ate};setMetricasPeriodo('custom',de,ate);}
+    });
+  }
 }
 
-function setMetricasPeriodo(tipo){
-  metricasPeriodo={tipo:tipo,ini:getPeriodoIni(tipo),fim:todayStr()};
-  // Se precisar rebuscar dados, mostra loading antes do sync
+function setMetricasPeriodo(tipo,ini,fim){
+  if(tipo!=='custom'){
+    metricasPeriodo={tipo:tipo,ini:getPeriodoIni(tipo),fim:todayStr()};
+  } else if(ini&&fim){
+    metricasPeriodo={tipo:'custom',ini:ini,fim:fim};
+  }
   var novoIni=metricasPeriodo.ini;
   if(dataInicioBuscada===null||novoIni<dataInicioBuscada){
     var el=document.getElementById('metricasConteudo');
