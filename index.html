@@ -963,6 +963,12 @@ var SKU_ACABAMENTO= {'1':'Junco','2':'Acquaflex','3':'Tela Sling','4':'Resort'};
 var SKU_COR       = {'1':'Preto','2':'Azul Marinho','3':'Tabaco','4':'Fendi','5':'Argila','6':'Verde-Oliva','7':'Marrom'};
 
 // Combinações fixas por modelo (todas as possíveis, incluindo sem venda)
+// Exceções manuais — SKUs criadas erradas mas em uso
+var SKU_EXCECOES = {
+  '011123': {produto:'Espreguiçadeira', material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'},
+  '021123': {produto:'Mesa de Centro',  material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'}
+};
+
 var COMBINACOES = (function(){
   var produtos = ['Espreguiçadeira','Mesa de Centro'];
   var PROD_ID = {'Espreguiçadeira':'1','Mesa de Centro':'2'};
@@ -1005,12 +1011,6 @@ var COMBINACOES = (function(){
   });
   return rows;
 })();
-
-// Exceções manuais — SKUs criadas erradas mas em uso
-var SKU_EXCECOES = {
-  '011123': {produto:'Espreguiçadeira', material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'},
-  '021123': {produto:'Mesa de Centro',  material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'}
-};
 
 function classificarSku(sku){
   // Verifica exceções primeiro
