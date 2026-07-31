@@ -970,9 +970,9 @@ var COMBINACOES = (function(){
 
   // Combinações por modelo e estrutura — regras exatas confirmadas
   var MATRIX = [
-    // Acquaflex: PF sem Marrom; Champ com Marrom
+    // Acquaflex: PF sem Marrom; Champ sem Azul e sem Marrom (não existe Champ Acquaflex Azul)
     {mod:'2',nome:'Acquaflex', est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Fendi','Verde-Oliva']},
-    {mod:'2',nome:'Acquaflex', est:'2',estNome:'Champagne',   cores:['Preto','Azul Marinho','Fendi','Verde-Oliva','Marrom']},
+    {mod:'2',nome:'Acquaflex', est:'2',estNome:'Champagne',   cores:['Preto','Fendi','Verde-Oliva','Marrom']},
     // Junco: PF com todas; Champ só Fendi
     {mod:'1',nome:'Junco',     est:'1',estNome:'Preto Fosco', cores:['Preto','Azul Marinho','Fendi','Tabaco','Argila']},
     {mod:'1',nome:'Junco',     est:'2',estNome:'Champagne',   cores:['Fendi']},
@@ -989,7 +989,16 @@ var COMBINACOES = (function(){
     MATRIX.forEach(function(m){
       m.cores.forEach(function(cor){
         var corId = COR_ID[cor];
-        var sku = corId ? '0'+PROD_ID[prod]+'1'+m.est+m.mod+corId : null;
+        var skuGerado = corId ? '0'+PROD_ID[prod]+'1'+m.est+m.mod+corId : null;
+        // Verifica se existe exceção manual para este SKU gerado
+        var skuOverride = null;
+        Object.keys(SKU_EXCECOES).forEach(function(skuExc){
+          var cl = SKU_EXCECOES[skuExc];
+          if(cl.produto===prod && cl.acabamento===m.nome && cl.estrutura===m.estNome && cl.cor===cor){
+            skuOverride = skuExc;
+          }
+        });
+        var sku = skuOverride || skuGerado;
         rows.push({produto:prod, modelo:m.nome, estrutura:m.estNome, cor:cor, sku:sku});
       });
     });
@@ -997,7 +1006,15 @@ var COMBINACOES = (function(){
   return rows;
 })();
 
+// Exceções manuais — SKUs criadas erradas mas em uso
+var SKU_EXCECOES = {
+  '011123': {produto:'Espreguiçadeira', material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'},
+  '021123': {produto:'Mesa de Centro',  material:'Aço/Ferro', estrutura:'Preto Fosco', acabamento:'Acquaflex', cor:'Azul Marinho'}
+};
+
 function classificarSku(sku){
+  // Verifica exceções primeiro
+  if(SKU_EXCECOES[sku]) return SKU_EXCECOES[sku];
   // SKU: 0{prod}{mat}{estr}{acab}{cor} — 6 dígitos
   // ex: 011112 → s[0]=0, s[1]=1(Espr), s[2]=1(Aço), s[3]=1(PF), s[4]=1(Junco), s[5]=2(Azul)
   var s=String(sku);
